@@ -43,7 +43,7 @@ const COLORS = {
 };
 const GAP = 6;
 const DONUT_DATA = [
-  { label: 'Shopping', percent: 62, color: COLORS.cyan },
+  { label: 'Shopping', percent: 60, color: COLORS.cyan },
   { label: 'Rent', percent: 20, color: COLORS.purpleChart },
   { label: 'Split', percent: 12, color: COLORS.gold },
   { label: 'Grocery', percent: 8, color: COLORS.emerald },
@@ -139,58 +139,77 @@ export default function AnalyticsScreen() {
 const progressAnims = useRef(CATEGORY_DATA.map(() => new Animated.Value(0))).current;
 
 
-  const runAnimations = useCallback(() => {
-    // Reset values
-    fadeAnims.forEach(anim => anim.setValue(0));
-    slideAnims.forEach(anim => anim.setValue(30));
-    barAnims.forEach(bar => { bar.in.setValue(0); bar.out.setValue(0); });
-    segmentAnims.forEach(anim => anim.setValue(0));
-    progressAnims.forEach(anim => anim.setValue(0));
+const runAnimations = useCallback(() => {
+  // --- RESET all animation values ---
+  fadeAnims.forEach(anim => anim.setValue(0));
+  slideAnims.forEach(anim => anim.setValue(30));
+  barAnims.forEach(bar => { bar.in.setValue(0); bar.out.setValue(0); });
+  segmentAnims.forEach(anim => anim.setValue(0));
+  progressAnims.forEach(anim => anim.setValue(0));
 
-    // 1. Entry Fade & Slide
-    const popIn = fadeAnims.map((anim, i) => 
-      Animated.parallel([
-        Animated.timing(anim, { toValue: 1, duration: 450, useNativeDriver: true }),
-        Animated.timing(slideAnims[i], { toValue: 0, duration: 450, useNativeDriver: true })
-      ])
-    );
+  // --- 1. Entry Fade & Slide ---
+  const popIn = fadeAnims.map((anim, i) =>
+    Animated.parallel([
+      Animated.timing(anim, { toValue: 1, duration: 450, useNativeDriver: true }),
+      Animated.timing(slideAnims[i], { toValue: 0, duration: 450, useNativeDriver: true })
+    ])
+  );
 
-    // 2. Specific View Animations
-    let detailAnims = [];
-    if (activeTab === 'OVERVIEW') {
-      detailAnims = [
-        ...barAnims.map((bar, i) => Animated.timing(bar.in, { toValue: WEEKLY_TREND[i].in, duration: 800, useNativeDriver: false })),
-        ...barAnims.map((bar, i) => Animated.timing(bar.out, { toValue: WEEKLY_TREND[i].out, duration: 800, useNativeDriver: false }))
-      ];
-    } else if (activeTab === 'EXPENSES' || activeTab === 'SPLITS') { 
-  detailAnims = [
-    // If it's Expenses, run the donut segments
-    ...(activeTab === 'EXPENSES' ? [
-      Animated.stagger(150, segmentAnims.map(anim => 
-        Animated.timing(anim, { 
-          toValue: 1, 
+  // --- 2. Specific View Animations ---
+  let detailAnims = [];
+
+  if (activeTab === 'OVERVIEW') {
+    // Weekly bars animation stays intact
+    detailAnims = [
+      ...barAnims.map((bar, i) =>
+        Animated.timing(bar.in, { toValue: WEEKLY_TREND[i].in, duration: 800, useNativeDriver: false })
+      ),
+      ...barAnims.map((bar, i) =>
+        Animated.timing(bar.out, { toValue: WEEKLY_TREND[i].out, duration: 800, useNativeDriver: false })
+      )
+    ];
+  } else if (activeTab === 'EXPENSES') {
+    // Donut segments animation
+    detailAnims = [
+      Animated.stagger(150, segmentAnims.map(anim =>
+        Animated.timing(anim, {
+          toValue: 1,
           duration: 400,
           easing: Easing.bezier(0.4, 0.0, 0.2, 1),
-          useNativeDriver: false 
+          useNativeDriver: false
+        })
+      )),
+      // Category progress bars
+      Animated.stagger(100, progressAnims.map(anim =>
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 800,
+          easing: Easing.out(Easing.exp),
+          useNativeDriver: false
         })
       ))
-    ] : []),
-    // Run progress bars for both Expenses and Splits
-    Animated.stagger(100, progressAnims.map(anim => 
-      Animated.timing(anim, { 
-        toValue: 1, 
-        duration: 800, // Slightly slower for a more premium feel
-        easing: Easing.out(Easing.exp), 
-        useNativeDriver: false 
-      })
-    ))
-  ];
-}
-    Animated.sequence([
-      Animated.stagger(60, popIn),
-      Animated.parallel(detailAnims)
-    ]).start();
-  }, [activeTab]);
+    ];
+  } else if (activeTab === 'SPLITS') {
+    // SPLITS animations (progress bars)
+    detailAnims = [
+      Animated.stagger(100, progressAnims.map(anim =>
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 800,
+          easing: Easing.out(Easing.exp),
+          useNativeDriver: false
+        })
+      ))
+    ];
+  }
+
+  // --- 3. Run everything ---
+  Animated.sequence([
+    Animated.stagger(60, popIn),
+    Animated.parallel(detailAnims)
+  ]).start();
+}, [activeTab]);
+
 
   useFocusEffect(runAnimations);
 
@@ -258,70 +277,61 @@ const renderExpenses = () => {
   const center = size / 2;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  
-  const gapDegrees = 4;
+
+  const gapDegrees = 4; 
   const totalGapDegrees = gapDegrees * DONUT_DATA.length;
   const availableDegrees = 360 - totalGapDegrees;
-  
-  // Starting point: -90 degrees is the top center (12 o'clock)
-  let currentRotation = -90;
 
+  // Start at -180 to align with the top/center after scale flip
+  let cumulativeRotation = -180;
 
-    return (
-     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+  return (
+    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Animated.View style={[styles.baseCard, styles.donutCard, { opacity: fadeAnims[0], transform: [{ translateY: slideAnims[0] }] }]}>
         <Text style={styles.totalSpentLabel}>TOTAL SPENT</Text>
         <Text style={styles.totalSpentValue}>₹150,018</Text>
-        
-       <View style={styles.donutWrapper}>
+
+        <View style={styles.donutWrapper}>
           <View style={[styles.svgContainer, { width: size, height: size }]}>
             <Svg width={size} height={size}>
-              {/* No global rotation on G here, we handle it per segment */}
-              <G origin={`${center}, ${center}`}>
+              {/* Apply scaleX={-1} to flip the coordinate system for anticlockwise flow */}
+              <G origin={`${center}, ${center}`} scaleX={-1}>
                 {/* Background Track */}
                 <Circle 
                   cx={center} cy={center} r={radius} 
                   stroke="#111" strokeWidth={strokeWidth} fill="transparent" 
                 />
-                
+
+                {/* Donut Segments */}
                 {DONUT_DATA.map((item, i) => {
                   const segmentDegrees = (item.percent / 100) * availableDegrees;
                   const strokeLength = (segmentDegrees / 360) * circumference;
                   const strokeOffset = circumference - strokeLength;
-                  
-                  // ANTI-CLOCKWISE LOGIC: 
-                  // We rotate the segment container to the START of where it should be.
-                  // Since SVG draws clockwise, we move the starting point backward.
-                  const segmentStartAngle = currentRotation - segmentDegrees;
-                  
-                  const segment = (
-                    <G 
-                      key={i} 
-                      rotation={segmentStartAngle} 
-                      origin={`${center}, ${center}`}
-                    >
+
+                  const rotation = cumulativeRotation;
+                  // Increasing rotation moves the segment "left" visually due to scaleX(-1)
+                  cumulativeRotation += (segmentDegrees + gapDegrees);
+
+                  return (
+                    <G key={i} rotation={rotation} origin={`${center}, ${center}`}>
                       <AnimatedCircle
                         cx={center} cy={center} r={radius}
                         stroke={item.color}
                         strokeWidth={strokeWidth}
                         fill="transparent"
-                        strokeDasharray={circumference}
+                        strokeDasharray={`${circumference} ${circumference}`}
                         strokeDashoffset={segmentAnims[i].interpolate({ 
                           inputRange: [0, 1], 
                           outputRange: [circumference, strokeOffset],
                         })}
-                        strokeLinecap="round"
+                        strokeLinecap="butt" 
                       />
                     </G>
                   );
-                  
-                  // Move the marker backward for the next segment + gap
-                  currentRotation -= (segmentDegrees + gapDegrees);
-                  
-                  return segment;
                 })}
               </G>
             </Svg>
+
             <View style={styles.donutTextContainer}>
               <Text style={styles.donutMainText}>11</Text>
               <Text style={styles.donutSubText}>CATEGORIES</Text>
@@ -342,41 +352,40 @@ const renderExpenses = () => {
 
       <Text style={styles.sectionHeader}>CATEGORY BREAKDOWN</Text>
 
-   {CATEGORY_DATA.map((item, i) => (
-  <Animated.View 
-    key={i} 
-    style={[
-      styles.baseCard, 
-      styles.breakdownCard, 
-      { opacity: fadeAnims[i+1], transform: [{ translateY: slideAnims[i+1] }] }
-    ]}
-  >
-    {/* Background color from data, Icon color forced to white */}
-    <View style={[styles.categoryIcon, { backgroundColor: item.color }]}>
-      <item.icon color="#ffffff" size={20} strokeWidth={2.5} />
-    </View>
+      {CATEGORY_DATA.map((item, i) => (
+        <Animated.View 
+          key={i} 
+          style={[
+            styles.baseCard, 
+            styles.breakdownCard, 
+            { opacity: fadeAnims[i+1], transform: [{ translateY: slideAnims[i+1] }] }
+          ]}
+        >
+          <View style={[styles.categoryIcon, { backgroundColor: item.color }]}>
+            <item.icon color="#ffffff" size={20} strokeWidth={2.5} />
+          </View>
 
-    <View style={styles.categoryInfo}>
-      <View style={styles.categoryTopRow}>
-        <Text style={styles.categoryTitle}>{item.label}</Text>
-        <Text style={styles.categoryAmount}>₹{item.amount}</Text>
-      </View>
-      
-      <View style={styles.progressRow}>
-        <View style={styles.progressBarContainer}>
-          <Animated.View style={[styles.progressBarFill, { 
-            backgroundColor: item.color, 
-            width: progressAnims[i].interpolate({ 
-              inputRange: [0, 1], 
-              outputRange: ['0%', `${item.percent}%`] 
-            }) 
-          }]} />
-        </View>
-        <Text style={styles.inlinePercent}>{item.percent}%</Text>
-      </View>
-    </View>
-  </Animated.View>
-))}
+          <View style={styles.categoryInfo}>
+            <View style={styles.categoryTopRow}>
+              <Text style={styles.categoryTitle}>{item.label}</Text>
+              <Text style={styles.categoryAmount}>₹{item.amount}</Text>
+            </View>
+            
+            <View style={styles.progressRow}>
+              <View style={styles.progressBarContainer}>
+                <Animated.View style={[styles.progressBarFill, { 
+                  backgroundColor: item.color, 
+                  width: progressAnims[i].interpolate({ 
+                    inputRange: [0, 1], 
+                    outputRange: ['0%', `${item.percent}%`] 
+                  }) 
+                }]} />
+              </View>
+              <Text style={styles.inlinePercent}>{item.percent}%</Text>
+            </View>
+          </View>
+        </Animated.View>
+      ))}
     </ScrollView>
   );
 };
