@@ -32,6 +32,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomCalendar from './CustomCalendar';
 const { height: screenHeight } = Dimensions.get('window');
 const { width } = Dimensions.get('window');
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API } from '../services/api';
 
 const categories = [
   { name: 'Salary', icon: Briefcase, color: '#10b981' },
@@ -64,6 +66,7 @@ export default function AddIncome({ navigation }: any) {
   const dotAnim = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dotOpacity = useRef(new Animated.Value(0)).current;
   const [layouts, setLayouts] = useState<Record<string, { x: number; y: number }>>({});
+const lockRef = useRef(false);
 
   useEffect(() => {
     if (step === 2 && layouts[category]) {
@@ -90,23 +93,54 @@ export default function AddIncome({ navigation }: any) {
   const nextStep = () => setStep((prev) => prev + 1);
   const prevStep = () => (step === 1 ? navigation.goBack() : setStep((prev) => prev - 1));
 
- const handleConfirm = () => {
-  setIsReporting(true); // Change state to true immediately
-  
-  // Optional: Add a subtle scale-down animation when pressed
+const handleConfirm = async () => {
+  if (lockRef.current) return;
+  lockRef.current = true;
+  setIsReporting(true);
+
   Animated.sequence([
     Animated.timing(confirmAnim, { toValue: 0.95, duration: 100, useNativeDriver: true }),
-    Animated.timing(confirmAnim, { toValue: 1, duration: 100, useNativeDriver: true })
+    Animated.timing(confirmAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
   ]).start();
+const parsedAmount = parseFloat(amount);
 
-  // Wait 3 seconds, then go back
-  setTimeout(() => {
-    navigation.goBack();
-    // Resetting is not strictly necessary since the component unmounts, 
-    // but good practice if you ever use "push" instead of "goBack"
-    setIsReporting(false); 
-  }, 3000);
+if (!parsedAmount || isNaN(parsedAmount)) {
+  alert('Enter a valid amount');
+  setIsReporting(false);
+  return;
+}
+
+  try {
+    const payload = {
+      amount: parsedAmount,
+      type: 'Income',
+      date: date.toISOString(),
+      description: description || '',
+      incomeCategoryName: category,
+    };
+
+    console.log('📤 Sending income payload:', payload);
+
+    const res = await API.post('/user/add-income', payload);
+
+    console.log('✅ Income added:', res.data);
+
+    // Optional success feedback
+    // Toast / Snackbar / Haptic here
+
+    navigation.goBack(); // Go back ONLY on success
+  } catch (error: any) {
+    console.error(
+      '❌ Add income failed:',
+      error.response?.data || error.message
+    );
+    alert('Failed to add income. Please try again.');
+  } finally {
+    lockRef.current = false;
+  setIsReporting(false);
+  }
 };
+
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }} edges={['top', 'bottom']}>
@@ -245,13 +279,14 @@ export default function AddIncome({ navigation }: any) {
       {/* The button stays in its natural position */}
      <View style={styles.confirmArea}>
   <Pressable
-    style={[
-      styles.confirmBtn, 
-      isReporting && { backgroundColor: '#10b981' } // Optional: Darken button when reporting
-    ]}
-    onPress={handleConfirm}
-    disabled={isReporting} // Prevent double-clicks
-  >
+  onPress={handleConfirm}
+  disabled={isReporting || showDate}
+  style={[
+    styles.confirmBtn,
+    (isReporting || showDate) && { opacity: 0.6 },
+  ]}
+>
+
     {/* Hide icon and change text when reporting */}
     {!isReporting && <Sparkles color="#fff" size={20} strokeWidth={2} />}
     
@@ -537,7 +572,7 @@ confirmArea: {
   zIndex: 1,
 },
 step3Content: { 
-  paddingBottom: 60     // Increase this to ensure the scrollview has room to move
+  paddingBottom: 60     
 },
   confirmBtn: { 
     backgroundColor: '#10b981', 

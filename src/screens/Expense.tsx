@@ -39,6 +39,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import CustomCalendar from './CustomCalendar';
 const { height: screenHeight } = Dimensions.get('window');
 const { width } = Dimensions.get('window');
+import { API } from '../services/api';
+
 
 const categories = [
   { name: 'Food', icon: Utensils, color: '#f97316' },
@@ -64,7 +66,7 @@ const categories = [
 export default function AddExpense({ navigation }: any) {
   const [step, setStep] = useState(1);
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState('Salary');
+const [category, setCategory] = useState('Food');
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(new Date());
   const [showDate, setShowDate] = useState(false);
@@ -75,7 +77,7 @@ export default function AddExpense({ navigation }: any) {
   const dotAnim = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dotOpacity = useRef(new Animated.Value(0)).current;
   const [layouts, setLayouts] = useState<Record<string, { x: number; y: number }>>({});
-
+const lockRef = useRef(false);
   useEffect(() => {
     if (step === 2 && layouts[category]) {
       Animated.parallel([
@@ -101,22 +103,50 @@ export default function AddExpense({ navigation }: any) {
   const nextStep = () => setStep((prev) => prev + 1);
   const prevStep = () => (step === 1 ? navigation.goBack() : setStep((prev) => prev - 1));
 
- const handleConfirm = () => {
-  setIsReporting(true); // Change state to true immediately
-  
-  // Optional: Add a subtle scale-down animation when pressed
+const handleConfirm = async () => {
+  if (lockRef.current) return;
+  lockRef.current = true;
+  setIsReporting(true);
+
   Animated.sequence([
     Animated.timing(confirmAnim, { toValue: 0.95, duration: 100, useNativeDriver: true }),
-    Animated.timing(confirmAnim, { toValue: 1, duration: 100, useNativeDriver: true })
+    Animated.timing(confirmAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
   ]).start();
+const parsedAmount = parseFloat(amount);
 
-  // Wait 3 seconds, then go back
-  setTimeout(() => {
-    navigation.goBack();
-    // Resetting is not strictly necessary since the component unmounts, 
-    // but good practice if you ever use "push" instead of "goBack"
-    setIsReporting(false); 
-  }, 3000);
+if (!parsedAmount || isNaN(parsedAmount)) {
+  alert('Enter a valid amount');
+  setIsReporting(false);
+  return;
+}
+
+  try {
+    const payload = {
+      
+      amount: parsedAmount,
+      type: 'Expense',
+      date: date.toISOString(),
+      description: description || '',
+      expenseCategoryName: category,
+    };
+
+    console.log('📤 Sending expense payload:', payload);
+
+    const res = await API.post('/user/add-expense', payload);
+
+    console.log('✅ Expense added:', res.data);
+
+    navigation.goBack(); // Only after success
+  } catch (error: any) {
+    console.error(
+      '❌ Add expense failed:',
+      error.response?.data || error.message
+    );
+    alert('Failed to add expense. Please try again.');
+  } finally {
+     lockRef.current = false;
+    setIsReporting(false);
+  }
 };
 
   return (
@@ -267,7 +297,7 @@ export default function AddExpense({ navigation }: any) {
     {!isReporting && <Sparkles color="#fff" size={20} strokeWidth={2} />}
     
     <Text style={styles.confirmText}>
-      {isReporting ? 'REPORTING...' : 'CONFIRM INCOME'}
+      {isReporting ? 'REPORTING...' : 'CONFIRM EXPENSE'}
     </Text>
   </Pressable>
 </View>

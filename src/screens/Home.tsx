@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Platform, Animated } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Platform, Animated,RefreshControl } from 'react-native';
 import { ArrowUp, ArrowDown, ArrowUpRight, ArrowDownLeft, Users, Square, Home, List, BarChart3, User } from 'lucide-react-native';
 import phoneIcon from '../assets/phone.png';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API } from '../services/api';
+import { useFocusEffect } from '@react-navigation/native';
 
 // ===== THEME CONSTANTS =====
 const COLORS = {
@@ -27,6 +30,9 @@ const formatCurrency = (value: number) => {
 export default function HomeScreen({ navigation }: any) {
   const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
   const [selectedStatBox, setSelectedStatBox] = useState<'income' | 'expense' | null>(null);
+const [transactions, setTransactions] = useState<any[]>([]);
+const [loading, setLoading] = useState(true);
+const [refreshing, setRefreshing] = useState(false);
 
   // Create separate animated values for each section
   const headerOpacity = useState(new Animated.Value(0))[0];
@@ -41,123 +47,138 @@ export default function HomeScreen({ navigation }: any) {
   const tx2Opacity = useState(new Animated.Value(0))[0];
   const tx2Y = useState(new Animated.Value(10))[0];
 
-  const transactions = [
-    { id: 1, title: 'Salary', amount: 78980, type: 'income' as const, category: 'SALARY', time: 'JAN 12 • 10:03 AM' },
-    { id: 2, title: 'Dinner', amount: 1500, type: 'expense' as const, category: 'FOOD', time: 'JAN 11 • 09:38 PM' },
-  ];
+const onRefresh = React.useCallback(async () => {
+  setRefreshing(true);
+  await fetchHomeData();
+  setRefreshing(false);
+}, []);
 
-  useEffect(() => {
-    // Staggered animation sequence
-    const animateSequence = () => {
-      // Reset all animations
-      headerOpacity.setValue(0);
-      balanceCardOpacity.setValue(0);
-      balanceCardY.setValue(30);
-      quickActionsOpacity.setValue(0);
-      quickActionsY.setValue(20);
-      recentHeaderOpacity.setValue(0);
-      recentHeaderY.setValue(15);
-      tx1Opacity.setValue(0);
-      tx1Y.setValue(10);
-      tx2Opacity.setValue(0);
-      tx2Y.setValue(10);
+useFocusEffect(
+  React.useCallback(() => {
+    setLoading(true);
+    fetchHomeData();
 
-      // Header animation (fade in only)
-      Animated.timing(headerOpacity, {
+    return () => {};
+  }, [])
+);
+
+ useEffect(() => {
+  const animateSequence = () => {
+    headerOpacity.setValue(0);
+    balanceCardOpacity.setValue(0);
+    balanceCardY.setValue(30);
+    quickActionsOpacity.setValue(0);
+    quickActionsY.setValue(20);
+    recentHeaderOpacity.setValue(0);
+    recentHeaderY.setValue(15);
+    tx1Opacity.setValue(0);
+    tx1Y.setValue(10);
+    tx2Opacity.setValue(0);
+    tx2Y.setValue(10);
+
+    Animated.timing(headerOpacity, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+
+    Animated.parallel([
+      Animated.timing(balanceCardOpacity, {
         toValue: 1,
-        duration: 500,
+        duration: 600,
         useNativeDriver: true,
-      }).start();
+      }),
+      Animated.timing(balanceCardY, {
+        toValue: 0,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+    ]).start();
 
-      // Balance card animation (fade in + slide up) after delay
+    setTimeout(() => {
       Animated.parallel([
-        Animated.timing(balanceCardOpacity, {
+        Animated.timing(quickActionsOpacity, {
           toValue: 1,
           duration: 600,
           useNativeDriver: true,
         }),
-        Animated.timing(balanceCardY, {
+        Animated.timing(quickActionsY, {
           toValue: 0,
           duration: 600,
           useNativeDriver: true,
         }),
       ]).start();
+    }, 200);
 
-      // Quick actions animation (fade in + slide up) after delay
-      setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(quickActionsOpacity, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(quickActionsY, {
-            toValue: 0,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }, 200);
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(recentHeaderOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(recentHeaderY, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 350);
+  };
 
-      // Recent activity header animation after delay
-      setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(recentHeaderOpacity, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(recentHeaderY, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }, 350);
+  animateSequence(); // initial run
 
-      // Transaction 1 animation after delay
-      setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(tx1Opacity, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(tx1Y, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }, 450);
+  const unsubscribe = navigation.addListener('focus', animateSequence);
 
-      // Transaction 2 animation after delay
-      setTimeout(() => {
-        Animated.parallel([
-          Animated.timing(tx2Opacity, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(tx2Y, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ]).start();
-      }, 550);
-    };
+  return unsubscribe;
+}, []);
 
-    // Start animation sequence
-    animateSequence();
 
-    // Add focus listener to replay animation when screen comes into focus
-    const unsubscribe = navigation.addListener('focus', () => {
-      animateSequence();
-    });
+const fetchHomeData = async () => {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+    const res = await API.get(`/user/transaction/${userId}`);
+    const apiData = res.data?.data || [];
 
-    return unsubscribe;
-  }, [navigation]);
+    // Frontend-only "latest added first"
+  const latestFirst = [...apiData].sort((a, b) => {
+  if (a.createdAt && b.createdAt) {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  }
+  return apiData.indexOf(b) - apiData.indexOf(a);
+});
+
+setTransactions(latestFirst.slice(0, 5));
+
+  } catch (err) {
+    console.log('Fetch error:', err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+// 2. Calculations
+const totals = React.useMemo(() => {
+  let income = 0;
+  let expense = 0;
+
+  // Added a check to ensure transactions is an array
+  (transactions || []).forEach((tx) => {
+    const amt = parseFloat(tx.amount) || 0; // Fallback to 0 if amount is null/undefined
+    if (tx.type === 'Income') {
+      income += amt;
+    } else {
+      expense += amt;
+    }
+  });
+
+  return {
+    income,
+    expense,
+    balance: income - expense
+  };
+}, [transactions]);
+
 
   const renderTransactionIcon = (type: 'income' | 'expense') => {
     if (type === 'income') {
@@ -189,6 +210,15 @@ export default function HomeScreen({ navigation }: any) {
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary} // iOS spinner color
+            colors={[COLORS.primary]}   // Android spinner colors
+            progressBackgroundColor={COLORS.card} // Android background
+          />
+        }
       >
         {/* Header */}
         <Animated.View style={[
@@ -218,7 +248,7 @@ export default function HomeScreen({ navigation }: any) {
             maskElement={
               <Text style={styles.totalBalance} >
                 
-                ₹{formatCurrency(71280)}
+                ₹{formatCurrency(totals.balance)}
               </Text>
             }
           >
@@ -229,7 +259,7 @@ export default function HomeScreen({ navigation }: any) {
               end={{ x: 0, y: 1 }}
             >
               <Text style={[styles.totalBalance, { opacity: 0 }]}>
-                ₹71280.00
+               ₹{formatCurrency(totals.balance)}
               </Text>
             </LinearGradient>
           </MaskedView>
@@ -252,7 +282,7 @@ export default function HomeScreen({ navigation }: any) {
                   <Text style={styles.statLabel}>INCOME</Text>
                 </View>
                <Text style={styles.incomeAmount}>
-  ₹{formatCurrency(10446788)}
+ ₹{formatCurrency(totals.income)}
 </Text>
 
               </View>
@@ -275,7 +305,7 @@ export default function HomeScreen({ navigation }: any) {
                   <Text style={styles.statLabel}>EXPENSES</Text>
                 </View>
                 <Text style={styles.expenseAmount}>
-  ₹{formatCurrency(33287800)}
+₹{formatCurrency(totals.expense)}
 </Text>
               </View>
             </TouchableOpacity>
@@ -331,75 +361,71 @@ export default function HomeScreen({ navigation }: any) {
           }
         ]}>
           <Text style={styles.sectionTitleRecent}>Recent Activity</Text>
-          <TouchableOpacity style={styles.viewAllBtn}>
-            <Text style={styles.viewAllText}>VIEW ALL</Text>
-          </TouchableOpacity>
+          <TouchableOpacity 
+    style={styles.viewAllBtn} 
+    onPress={() => navigation.navigate('TransactionsTab')} 
+    activeOpacity={0.7}
+  >
+    <Text style={styles.viewAllText}>VIEW ALL</Text>
+  </TouchableOpacity>
         </Animated.View>
 
         {/* Transaction Cards */}
-        {transactions.map((tx, index) => {
-          const opacityAnim = index === 0 ? tx1Opacity : tx2Opacity;
-          const translateYAnim = index === 0 ? tx1Y : tx2Y;
+{transactions.map((tx) => {
+  const type = tx.type.toLowerCase() as 'income' | 'expense';
 
-          return (
-            <Animated.View
-              key={tx.id}
-              style={[
-                {
-                  opacity: opacityAnim,
-                  transform: [{ translateY: translateYAnim }]
-                }
-              ]}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.txCard,
-                  selectedTxId === tx.id && styles.txCardSelected
-                ]}
-                onPress={() => setSelectedTxId(tx.id)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.txLeft}>
-                  <View style={[
-                    styles.txIconBg,
-                    { backgroundColor: getIconBackgroundColor(tx.type) }
-                  ]}>
-                    {renderTransactionIcon(tx.type)}
-                  </View>
+  return (
+    <Animated.View
+      key={tx._id}
+      style={{
+        opacity: recentHeaderOpacity,
+        transform: [{ translateY: recentHeaderY }],
+      }}
+    >
+      <TouchableOpacity
+        style={[
+          styles.txCard,
+          selectedTxId === tx._id && styles.txCardSelected,
+        ]}
+        onPress={() => setSelectedTxId(tx._id)}
+      >
+        <View style={styles.txLeft}>
+          <View
+            style={[
+              styles.txIconBg,
+              { backgroundColor: getIconBackgroundColor(type) },
+            ]}
+          >
+            {renderTransactionIcon(type)}
+          </View>
+          <View>
+            <Text style={styles.txTitle}>
+              {type === 'income'
+                ? tx.incomeCategoryName
+                : tx.expenseCategoryName}
+            </Text>
+            <Text style={styles.txTime}>
+              {new Date(tx.date).toLocaleDateString()}
+            </Text>
+          </View>
+        </View>
 
-                  <View>
-                    <Text style={[
-                      styles.txTitle,
-                      selectedTxId === tx.id && styles.txTitleSelected
-                    ]}>
-                      {tx.title}
-                    </Text>
-                    <Text style={styles.txTime}>{tx.time}</Text>
-                  </View>
-                </View>
+        <View style={styles.txRight}>
+          <Text style={[styles.txAmount, { color: getAmountColor(type) }]}>
+            {getAmountPrefix(type)}₹{formatCurrency(tx.amount)}
+          </Text>
+          <View style={styles.txCategoryRow}>
+            <View
+              style={[styles.dot, { backgroundColor: getDotColor(type) }]}
+            />
+            <Text style={styles.txCategory}>{type.toUpperCase()}</Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+})}
 
-                <View style={styles.txRight}>
-                 <Text style={[styles.txAmount, { color: getAmountColor(tx.type) }]}>
-  {getAmountPrefix(tx.type)}₹{formatCurrency(tx.amount)}
-</Text>
-
-                  <View style={styles.txCategoryRow}>
-                    <View style={[
-                      styles.dot,
-                      { backgroundColor: getDotColor(tx.type) }
-                    ]} />
-                    <Text style={[
-                      styles.txCategory,
-                      selectedTxId === tx.id && styles.txCategorySelected
-                    ]}>
-                      {tx.category}
-                    </Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            </Animated.View>
-          );
-        })}
       </ScrollView>
     </View>
   );

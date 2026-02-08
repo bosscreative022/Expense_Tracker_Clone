@@ -8,10 +8,14 @@ import {
   Image, 
   TextInput,
   Animated,
-  Dimensions
+  Dimensions,
+  RefreshControl
 } from 'react-native';
 import { Search, Filter, ArrowUpRight, ArrowDownLeft, Calendar, MoreVertical, ArrowUp, ArrowDown, Check } from 'lucide-react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API } from '../services/api';
+
 
 // ===== THEME CONSTANTS =====
 const COLORS = {
@@ -35,43 +39,174 @@ const { width } = Dimensions.get('window');
 export default function TransactionsScreen({ navigation }: any) {
   const [activeTab, setActiveTab] = useState<'all' | 'income' | 'expense'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTxId, setSelectedTxId] = useState<number | null>(null);
+ const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
+const [transactions, setTransactions] = useState<any[]>([]);
+const [loading, setLoading] = useState(false);
+const [refreshing, setRefreshing] = useState(false);
+const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    hasAnimatedRef.current = false; 
+    await fetchTransactions();
+    setRefreshing(false);
+  }, []);
+
+const getDateLabel = (isoDate: string) => {
+    const d = new Date(isoDate);
+    const today = new Date();
+    
+    const comparisonDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const yesterdayDate = todayDate - 86400000;
+
+    if (comparisonDate === todayDate) return 'TODAY';
+    if (comparisonDate === yesterdayDate) return 'YESTERDAY';
+
+    return d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).toUpperCase();
+  };
+
+  const getTimeLabel = (isoDate: string) =>
+    new Date(isoDate).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
 
   // 🔑 animation flag (REF – does not rerender)
   const hasAnimatedRef = useRef(false);
 
   // Sample transactions data
-  const transactions = [
-    { id: 1, title: 'Salary', amount: '78980', type: 'income' as const, category: 'SALARY', time: 'JAN 12 • 10:03 AM', date: 'TODAY', dateGroup: 'today' },
-    { id: 2, title: 'Dinner', amount: '1500', type: 'expense' as const, category: 'FOOD', time: 'JAN 11 • 09:38 PM', date: 'TODAY', dateGroup: 'today' },
-    { id: 3, title: 'Salary', amount: '8980', type: 'income' as const, category: 'SALARY', time: '12:32 PM', date: 'YESTERDAY', dateGroup: 'yesterday' },
-    { id: 4, title: 'Salary', amount: '500', type: 'income' as const, category: 'SALARY', time: '08:38 AM', date: 'YESTERDAY', dateGroup: 'yesterday' },
-    { id: 5, title: 'Salary', amount: '5000', type: 'income' as const, category: 'SALARY', time: '03:38 PM', date: 'JAN 10, 2026', dateGroup: 'jan10' },
-    { id: 6, title: 'Business', amount: '100', type: 'income' as const, category: 'BUSINESS', time: '12:17 PM', date: 'TODAY', dateGroup: 'today' },
-    { id: 7, title: 'Rapido', amount: '250', type: 'income' as const, category: 'TRANSPORT', time: '10:03 AM', date: 'TODAY', dateGroup: 'today' },
-  ];
-
+ 
   // 🔥 reset ONLY when screen is entered / exited
-  useFocusEffect(
-    useCallback(() => {
-      hasAnimatedRef.current = false;
-      return () => {
-        hasAnimatedRef.current = false;
-      };
-    }, [])
-  );
+useFocusEffect(
+  useCallback(() => {
+    hasAnimatedRef.current = false;
+    fetchTransactions();
 
-  const filteredTransactions = transactions.filter(tx => {
-    if (activeTab === 'income') return tx.type === 'income';
-    if (activeTab === 'expense') return tx.type === 'expense';
-    return true;
+    return () => {
+      hasAnimatedRef.current = false;
+    };
+  }, [])
+);
+
+const fetchTransactions = async () => {
+  try {
+    setLoading(true);
+
+    const userId = await AsyncStorage.getItem('userId');
+    const token = await AsyncStorage.getItem('token');
+
+    console.log('🧑 userId from storage:', userId);
+    console.log('🔐 token from storage:', token);
+
+    const res = await API.get(`/user/transaction/${userId}`);
+
+    console.log('📥 FULL TRANSACTIONS RESPONSE:', res.data);
+
+    const apiData = (res.data?.data || []).sort(
+  (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
+);
+
+
+    console.log('📦 TRANSACTIONS ARRAY:', apiData);
+    console.log('📦 LENGTH:', apiData.length);
+
+  const formatted = apiData.map((item: any) => {
+  const isIncome = item.type === 'Income';
+
+  const description =
+    item.description ||
+    item.note ||
+    item.remarks ||
+    '';
+
+  const categoryName = isIncome
+    ? item.incomeCategoryName
+    : item.expenseCategoryName;
+
+  const title =
+    description && description.trim().length > 0
+      ? description
+      : categoryName;
+
+  return {
+    id: item._id,
+    title, // 🔥 FINAL TITLE
+    amount: item.amount.toString(),
+    type: isIncome ? 'income' : 'expense',
+    category: categoryName?.toUpperCase(),
+    time: getTimeLabel(item.date),
+    rawDate: item.date,
+    dateLabel: getDateLabel(item.date),
+    timestamp: new Date(item.date).getTime(),
+  };
+});
+
+    console.log('✅ FORMATTED TRANSACTIONS:', formatted);
+
+    setTransactions(formatted);
+    hasAnimatedRef.current = false;
+  } catch (err) {
+    console.log('❌ Fetch transactions failed:', err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+const filteredTransactions = transactions.filter(tx => {
+    // 1. Filter by Tab
+    const matchesTab = activeTab === 'all' || tx.type === activeTab;
+
+    // 2. Filter by Search Query (Title or Category)
+    const matchesSearch = 
+      tx.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      tx.category.toLowerCase().includes(searchQuery.toLowerCase());
+
+    return matchesTab && matchesSearch;
   });
 
-  const groupedTransactions = filteredTransactions.reduce((groups, transaction) => {
-    if (!groups[transaction.date]) groups[transaction.date] = [];
-    groups[transaction.date].push(transaction);
-    return groups;
-  }, {} as Record<string, typeof transactions>);
+// 1. Group transactions by day
+const groupedTransactions = filteredTransactions.reduce((groups, tx) => {
+  const date = new Date(tx.rawDate);
+  // Create a local midnight timestamp for the group key
+  const dayTimestamp = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+
+  if (!groups[dayTimestamp]) {
+    groups[dayTimestamp] = {
+      label: tx.dateLabel,
+      timestamp: dayTimestamp,
+      items: [],
+    };
+  }
+
+  groups[dayTimestamp].items.push(tx);
+  return groups;
+}, {} as Record<number, { label: string; timestamp: number; items: any[] }>);
+
+// 2. Sort the Groups with PRIORITY
+const sortedGroupedTransactions = Object.values(groupedTransactions).sort((a, b) => {
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const yesterdayStart = todayStart - 86400000;
+
+  // PRIORITY 1: Today
+  if (a.timestamp === todayStart) return -1;
+  if (b.timestamp === todayStart) return 1;
+
+  // PRIORITY 2: Yesterday
+  if (a.timestamp === yesterdayStart) return -1;
+  if (b.timestamp === yesterdayStart) return 1;
+
+  // OTHERWISE: Normal descending order
+  return b.timestamp - a.timestamp;
+});
+
+// 3. Sort Items within each group by time (Newest first)
+sortedGroupedTransactions.forEach(group => {
+  group.items.sort((a, b) => b.timestamp - a.timestamp);
+});
 
   const TransactionItem = React.memo(({ tx, index, isSelected }: any) => {
    const opacity = useRef(
@@ -230,25 +365,50 @@ const rightTranslateX = useRef(
       </View>
 
       {/* Transactions List */}
-      <ScrollView 
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {Object.entries(groupedTransactions).map(([date, dateTransactions]) => (
-          <View key={date} style={styles.dateSection}>
-            <Text style={styles.dateHeader}>{date}</Text>
-            {dateTransactions.map((tx, index) => (
-              <TransactionItem
-                key={tx.id}
-                tx={tx}
-                index={index}
-                isSelected={selectedTxId === tx.id}
-              />
-            ))}
-          </View>
-        ))}
-      </ScrollView>
+     <ScrollView
+  style={styles.scrollView}
+  showsVerticalScrollIndicator={false}
+  contentContainerStyle={styles.scrollContent}
+  refreshControl={
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      tintColor={COLORS.primary} // For iOS
+      colors={[COLORS.primary]}   // For Android
+      progressBackgroundColor={COLORS.card}
+    />
+  }
+>
+ {loading && !refreshing && (
+  <Text style={{ color: COLORS.gray, textAlign: 'center', marginTop: 40 }}>
+    Loading transactions...
+  </Text>
+)}
+
+  {!loading && Object.keys(groupedTransactions).length === 0 && (
+    <Text style={{ color: COLORS.gray, textAlign: 'center', marginTop: 40 }}>
+      No transactions found
+    </Text>
+  )}
+
+ {!loading &&
+  sortedGroupedTransactions.map(group => (
+    <View key={group.label} style={styles.dateSection}>
+      <Text style={styles.dateHeader}>{group.label}</Text>
+
+      {group.items.map((tx, index) => (
+        <TransactionItem
+          key={tx.id}
+          tx={tx}
+          index={index}
+          isSelected={selectedTxId === tx.id}
+        />
+      ))}
+    </View>
+  ))}
+
+</ScrollView>
+
     </View>
   );
 }
