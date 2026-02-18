@@ -53,7 +53,7 @@ const { setUserToken } = useContext(AuthContext);
     setResending(true);
 
     await axios.post(
-      'https://79d1-2401-4900-cac1-c79b-b9bf-2b18-33f1-8c41.ngrok-free.app/api/user/send-otp',
+      'https://nepenthean-undeclared-gunnar.ngrok-free.dev/api/user/send-otp',
       { email }
     );
 
@@ -65,35 +65,41 @@ const { setUserToken } = useContext(AuthContext);
     setResending(false);
   }
 };
- const handleVerifyOTP = async () => {
-    if (!isComplete || loading) return;
-    setLoading(true);
-    const otpString = otp.join('');
+const handleVerifyOTP = async () => {
+  if (!isComplete || loading) return;
+  setLoading(true);
+  const otpString = otp.join('');
 
-    try {
-      const response = await axios.post('https://79d1-2401-4900-cac1-c79b-b9bf-2b18-33f1-8c41.ngrok-free.app/api/user/verify-otp', {
-        email: email,
-        otp: otpString,
-      });
+  try {
+    const response = await axios.post('https://nepenthean-undeclared-gunnar.ngrok-free.dev/api/user/verify-otp', {
+      email: email,
+      otp: otpString,
+    });
 
-     if (response.data.success) {
-  const token = response.data.token;
-const userId = response.data.user._id;
-  console.log(' Auth Token received:', token);
+    if (response.data.success) {
+      const token = response.data.token;
+      // Extract userId from the nested user object based on your JSON sample
+      const userId = response.data.user.id; 
 
-  await AsyncStorage.setItem('userToken', token);
-  await AsyncStorage.setItem('userEmail', email);
-  
-  setUserToken(token);
-}
-    } catch (error) {
-      console.error('Verify OTP Error:', error.response?.data || error.message);
-      alert('Invalid OTP. Please try again.');
-    } finally {
-      setLoading(false);
+      // 🔥 Console the User ID here
+      console.log('✅ User ID received:', userId);
+      console.log('✅ Auth Token received:', token);
+
+      // Save to AsyncStorage for persistence
+      await AsyncStorage.setItem('userToken', token);
+      await AsyncStorage.setItem('userId', userId); 
+      await AsyncStorage.setItem('userEmail', email);
+      
+      // Update global context
+      setUserToken(token);
     }
-  };
-
+  } catch (error) {
+    console.error('Verify OTP Error:', error.response?.data || error.message);
+    alert('Invalid OTP. Please try again.');
+  } finally {
+    setLoading(false);
+  }
+};
 const handleOtpChange = (value, index) => {
   if (!/^\d?$/.test(value)) return; 
 

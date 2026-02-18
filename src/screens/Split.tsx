@@ -6,7 +6,9 @@ import {
 import { Search, Clock, Wallet, Users, ChevronRight, Plus } from 'lucide-react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { getAllSplitGroups } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
 const { width } = Dimensions.get('window');
@@ -84,6 +86,7 @@ const SplitCard = ({ item, index }: { item: any; index: number }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
 
+
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -101,13 +104,14 @@ const SplitCard = ({ item, index }: { item: any; index: number }) => {
     ]).start();
   }, []);
 
+  
   return (
     <TouchableOpacity
       activeOpacity={0.85}
       onPress={() =>
         navigation.navigate('GroupOverview', {
           id: item.id,
-          title: item.title,
+         groupName: item.title,
           members: item.members,
           pending: item.pending,
           collected: item.collected,
@@ -170,28 +174,88 @@ const SplitCard = ({ item, index }: { item: any; index: number }) => {
 export default function SplitScreen() {
   const navigation = useNavigation<any>();
   const [activeTab, setActiveTab] = useState('ALL');
+const [splits, setSplits] = useState<any[]>([]);
+const [loading, setLoading] = useState(true);
+const [searchQuery, setSearchQuery] = useState('');
 
-  const DATA = [
-    { id: '1', title: 'Mount abu', members: 5, pending: 8000, collected: 4000, progress: 40, status: 'PENDING' },
-    { id: '2', title: 'Ahmedabad to goa', members: 4, pending: 0, collected: 4500, progress: 100, status: 'SETTLED' },
-    { id: '3', title: 'Tour Ahmedabad', members: 4, pending: 1250, collected: 3750, progress: 75, status: 'PENDING' },
-    { id: '4', title: 'Ahmedabad to goa', members: 5, pending: 7200, collected: 4800, progress: 40, status: 'PENDING' },
-    { id: '5', title: 'Ahmedabad tour', members: 4, pending: 3750, collected: 1250, progress: 25, status: 'PENDING' },
-    { id: '6', title: 'Banglore trip', members: 4, pending: 5000, collected: 5000, progress: 50, status: 'PENDING' },
-    { id: '7', title: 'India tour', members: 4, pending: 5000, collected: 5000, progress: 50, status: 'PENDING' },
-    { id: '8', title: 'Dinner', members: 4, pending: 1250, collected: 3750, progress: 75, status: 'PENDING' },
-    { id: '9', title: 'Goa', members: 4, pending: 3750, collected: 1250, progress: 25, status: 'PENDING' },
-    { id: '10', title: 'Goa', members: 4, pending: 2500, collected: 2500, progress: 50, status: 'PENDING' },
-    { id: '11', title: 'Goa', members: 4, pending: 2500, collected: 2500, progress: 50, status: 'PENDING' },
-    { id: '12', title: 'Tour', members: 4, pending: 3750, collected: 1250, progress: 25, status: 'PENDING' },
-    { id: '13', title: 'Goa tour', members: 4, pending: 3750, collected: 1250, progress: 25, status: 'PENDING' },
-    { id: '14', title: 'Goa tour', members: 4, pending: 1250, collected: 3750, progress: 75, status: 'PENDING' },
-    { id: '15', title: 'Dinner', members: 3, pending: 0, collected: 5000.01, progress: 100, status: 'SETTLED' },
-    { id: '16', title: 'Birthday Party', members: 2, pending: 0, collected: 5000.01, progress: 100, status: 'SETTLED' },
-    { id: '17', title: 'Trip to Goa', members: 3, pending: 12500, collected: 0, progress: 0, status: 'PENDING' },
-  ];
+useFocusEffect(
+  React.useCallback(() => {
+    fetchSplits();
+  }, [])
+);
 
-  const filteredData = activeTab === 'ALL' ? DATA : DATA.filter(item => item.status === activeTab);
+
+const fetchSplits = async () => {
+  try {
+    setLoading(true);
+    const userId = await AsyncStorage.getItem('userId');
+
+    if (!userId) {
+      setSplits([]);
+      return;
+    }
+
+    const res = await getAllSplitGroups(userId);
+    const apiData = res.data?.data || [];
+
+    const formatted = apiData.map((group: any) => {
+      const total = Number(group.totalAmount || 0);
+
+      // 1. Calculate collected using "status === 'settled'" and "m.amount"
+      const collected = (group.members || [])
+        .filter((m: any) => m.status === 'settled') // Backend uses 'status'
+        .reduce((sum: number, m: any) => sum + Number(m.amount || 0), 0); // Backend uses 'amount'
+
+      const pending = total - collected;
+      const progress = total === 0 ? 0 : Math.round((collected / total) * 100);
+
+      return {
+        id: group.id || group._id,
+        title: group.name,
+        members: group.members?.length || 0,
+        pending,
+        collected,
+        progress,
+        // Using total logic to determine status
+        status: pending <= 0 ? 'SETTLED' : 'PENDING',
+      };
+    });
+
+    setSplits(formatted);
+  } catch (err: any) {
+    console.log('GET SPLITS ERROR:', err.response?.data || err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+
+// 1. Calculate stats based on the full list of splits
+const stats = React.useMemo(() => {
+  return splits.reduce(
+    (acc, curr) => {
+      acc.totalPending += curr.pending;
+      acc.totalCollected += curr.collected;
+      return acc;
+    },
+    { totalPending: 0, totalCollected: 0 }
+  );
+}, [splits]);
+
+// 2. Filter data based on BOTH Tab and Search Query
+const filteredData = React.useMemo(() => {
+  return splits.filter((item) => {
+    // Check if it matches the current tab
+    const matchesTab = activeTab === 'ALL' || item.status === activeTab;
+    
+    // Check if it matches the search query (case-insensitive)
+    const matchesSearch = item.title
+      .toLowerCase()
+      .includes(searchQuery.toLowerCase());
+
+    return matchesTab && matchesSearch;
+  });
+}, [splits, activeTab, searchQuery]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -217,34 +281,43 @@ keyboardShouldPersistTaps="handled"
         </View>
 
         <View style={styles.searchBox}>
-          <Search size={16} color={COLORS.textSecondary} />
-          <TextInput
-            placeholder="Search splits, members..."
-            placeholderTextColor={COLORS.textSecondary}
-            style={styles.searchInput}
-          />
-        </View>
-
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <View style={[styles.iconBg, { backgroundColor: '#201708' }]}>
-                <Clock size={16} color="#F59E0B" />
-              </View>
-              <Text style={styles.statLabel}>PENDING</Text>
-            </View>
-            <Text style={styles.statValue}>₹58,200</Text>
-          </View>
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <View style={[styles.iconBg, { backgroundColor: '#091a14' }]}>
-                <Wallet size={16} color="#0eac78" />
-              </View>
-              <Text style={styles.statLabel}>COLLECTED</Text>
-            </View>
-            <Text style={styles.statValue}>₹55,800.01</Text>
-          </View>
-        </View>
+  <Search size={16} color={COLORS.textSecondary} />
+  <TextInput
+    placeholder="Search splits, members..."
+    placeholderTextColor={COLORS.textSecondary}
+    style={styles.searchInput}
+    value={searchQuery} // Add this
+    onChangeText={setSearchQuery} // Add this
+    autoCapitalize="none"
+  />
+</View>
+<View style={styles.statsRow}>
+  <View style={styles.statCard}>
+    <View style={styles.statHeader}>
+      <View style={[styles.iconBg, { backgroundColor: '#201708' }]}>
+        <Clock size={16} color="#F59E0B" />
+      </View>
+      <Text style={styles.statLabel}>PENDING</Text>
+    </View>
+    {/* Updated Value */}
+    <Text style={styles.statValue}>
+      ₹{stats.totalPending.toLocaleString('en-IN')}
+    </Text>
+  </View>
+  
+  <View style={styles.statCard}>
+    <View style={styles.statHeader}>
+      <View style={[styles.iconBg, { backgroundColor: '#091a14' }]}>
+        <Wallet size={16} color="#0eac78" />
+      </View>
+      <Text style={styles.statLabel}>COLLECTED</Text>
+    </View>
+    {/* Updated Value */}
+    <Text style={styles.statValue}>
+      ₹{stats.totalCollected.toLocaleString('en-IN')}
+    </Text>
+  </View>
+</View>
 
         <View style={styles.tabContainer}>
           {['ALL', 'PENDING', 'SETTLED'].map(tab => (
@@ -258,11 +331,20 @@ keyboardShouldPersistTaps="handled"
           ))}
         </View>
 
-       <View style={styles.listContainer}>
-{filteredData.map((item, index) => (
-<SplitCard key={item.id} item={item} index={index} />
-))}
+      <View style={styles.listContainer}>
+  {filteredData.map((item, index) => (
+    <SplitCard key={item.id} item={item} index={index} />
+  ))}
 </View>
+{!loading && filteredData.length === 0 && (
+    <View style={{ alignItems: 'center', marginTop: 40 }}>
+      <Search size={40} color={COLORS.border} />
+      <Text style={{ color: '#666', marginTop: 10, fontFamily: 'Outfit-Bold' }}>
+        No splits found for "{searchQuery}"
+      </Text>
+    </View>
+  )}
+
 </ScrollView>
       </View>
     </SafeAreaView>
@@ -277,7 +359,7 @@ const styles = StyleSheet.create({
   headerTitle: { color: COLORS.white, fontSize: 30, fontFamily: 'Outfit-Bold', marginTop: 4 },
   addBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center' },
   searchBox: { flexDirection: 'row', backgroundColor: "#080808", marginHorizontal: 24, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, alignItems: 'center', paddingVertical: 5 },
-  searchInput: { flex: 1, color: COLORS.white, marginLeft: 10, fontFamily: 'inter3-Bold', fontSize: 14 },
+  searchInput: { flex: 1, color: COLORS.white, marginLeft: 10, fontFamily: 'Inter_18pt-Bold', fontSize: 14 },
   statsRow: { flexDirection: 'row', paddingHorizontal: 24, gap: 12, marginTop: 20 },
   statCard: { flex: 1, backgroundColor: "#080808", padding: 16, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border },
   statHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },

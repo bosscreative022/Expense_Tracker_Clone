@@ -43,12 +43,30 @@ export default function TransactionsScreen({ navigation }: any) {
 const [transactions, setTransactions] = useState<any[]>([]);
 const [loading, setLoading] = useState(false);
 const [refreshing, setRefreshing] = useState(false);
+const [groupMap, setGroupMap] = useState({});
+
 const onRefresh = useCallback(async () => {
     setRefreshing(true);
     hasAnimatedRef.current = false; 
     await fetchTransactions();
     setRefreshing(false);
   }, []);
+
+  const fetchGroups = async () => {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+    const res = await API.get(`/user/split/${userId}`);
+
+    const map = {};
+    (res.data?.data || []).forEach(g => {
+      map[g._id] = g.name;
+    });
+
+    setGroupMap(map);
+  } catch (e) {
+    console.log('Group fetch error', e);
+  }
+};
 
 const getDateLabel = (isoDate: string) => {
     const d = new Date(isoDate);
@@ -68,12 +86,15 @@ const getDateLabel = (isoDate: string) => {
     }).toUpperCase();
   };
 
-  const getTimeLabel = (isoDate: string) =>
-    new Date(isoDate).toLocaleTimeString([], {
+const getTimeLabel = (date: string) => {
+  return new Date(date)
+    .toLocaleTimeString([], {
       hour: '2-digit',
       minute: '2-digit',
-    });
-
+      hour12: true,
+    })
+    .toUpperCase();   // ✅ This makes AM/PM uppercase
+};
   // 🔑 animation flag (REF – does not rerender)
   const hasAnimatedRef = useRef(false);
 
@@ -83,6 +104,7 @@ const getDateLabel = (isoDate: string) => {
 useFocusEffect(
   useCallback(() => {
     hasAnimatedRef.current = false;
+    fetchGroups();        // ⭐ MUST call first
     fetchTransactions();
 
     return () => {
@@ -94,66 +116,92 @@ useFocusEffect(
 const fetchTransactions = async () => {
   try {
     setLoading(true);
-
     const userId = await AsyncStorage.getItem('userId');
-    const token = await AsyncStorage.getItem('token');
 
-    console.log('🧑 userId from storage:', userId);
-    console.log('🔐 token from storage:', token);
+    // 1️⃣ Normal Transactions
+    const resTx = await API.get(`/user/transaction/${userId}`);
+    const apiTxData = resTx.data?.data || [];
 
-    const res = await API.get(`/user/transaction/${userId}`);
+    // 2️⃣ Paid Members (Split Settled)
+const resPaid = await API.get(`/user/split/paid-members`);
+const groups = resPaid.data?.data || [];
 
-    console.log('📥 FULL TRANSACTIONS RESPONSE:', res.data);
+let paidAsTx: any[] = [];
 
-    const apiData = (res.data?.data || []).sort(
-  (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
-);
+groups.forEach((group: any) => {
+  group.members.forEach((member: any) => {
 
+    // ✅ SAME LOGIC AS fetchHomeData
+   if (member.isPaid)  {
 
-    console.log('📦 TRANSACTIONS ARRAY:', apiData);
-    console.log('📦 LENGTH:', apiData.length);
+      const isYou = member.name === "You";
 
-  const formatted = apiData.map((item: any) => {
-  const isIncome = item.type === 'Income';
+      paidAsTx.push({
+        id: `split-${group._id}-${member.id}`,
+        title: `${member.name} • ${group.name}`, 
+        amount: member.amount.toString(),
+        type: isYou ? 'expense' : 'income',
+        category: 'SPLIT',
+        rawDate: group.updatedAt || group.createdAt,
+        timestamp: new Date(
+          group.updatedAt || group.createdAt
+        ).getTime(),
+      });
 
-  const description =
-    item.description ||
-    item.note ||
-    item.remarks ||
-    '';
+    }
 
-  const categoryName = isIncome
-    ? item.incomeCategoryName
-    : item.expenseCategoryName;
+  });
+});
 
-  const title =
-    description && description.trim().length > 0
-      ? description
-      : categoryName;
+// 3️⃣ Format ONLY Income & Expense
+const formattedNormal = apiTxData.map((item: any) => {
+  const type = item.type?.toLowerCase();
+  const category = item.category?.toUpperCase() || 'OTHER';
+
+  let displayTitle = '';
+
+  if (type === 'split') {
+    displayTitle = `You • ${item.title}`;
+  } else {
+    displayTitle =
+      item.description?.trim() ||
+      item.title ||
+      category;
+  }
 
   return {
-    id: item._id,
-    title, // 🔥 FINAL TITLE
+    id: item.id || item._id,
+    title: displayTitle,
     amount: item.amount.toString(),
-    type: isIncome ? 'income' : 'expense',
-    category: categoryName?.toUpperCase(),
-    time: getTimeLabel(item.date),
+    type: type === 'income' ? 'income' : 'expense',
+    category,
     rawDate: item.date,
-    dateLabel: getDateLabel(item.date),
     timestamp: new Date(item.date).getTime(),
   };
 });
 
-    console.log('✅ FORMATTED TRANSACTIONS:', formatted);
+    // 4️⃣ Combine Both
+    const combined = [...formattedNormal, ...paidAsTx].sort(
+      (a, b) => b.timestamp - a.timestamp
+    );
 
-    setTransactions(formatted);
+    // 5️⃣ Final Format For UI
+    const finalData = combined.map(tx => ({
+      ...tx,
+      time: getTimeLabel(tx.rawDate),
+      dateLabel: getDateLabel(tx.rawDate),
+    }));
+
+    setTransactions(finalData);
     hasAnimatedRef.current = false;
+
   } catch (err) {
     console.log('❌ Fetch transactions failed:', err);
   } finally {
     setLoading(false);
   }
 };
+
 
 const filteredTransactions = transactions.filter(tx => {
     // 1. Filter by Tab
@@ -248,39 +296,61 @@ const rightTranslateX = useRef(
       });
     }, []);
 
-    return (
-      <Animated.View style={[styles.txCard, isSelected && styles.txCardSelected, { opacity, transform: [{ scale }] }]}>
-        <TouchableOpacity
-          style={styles.txCardTouchable}
-          onPress={() => setSelectedTxId(tx.id)}
-          activeOpacity={0.7}
-        >
-          <Animated.View style={[styles.txLeft, { transform: [{ translateX: leftTranslateX }] }]}>
-            <View style={[styles.txIconBg, { backgroundColor: tx.type === 'income' ? '#0f201a' : '#1f0f0f' }]}>
-              {tx.type === 'income'
-                ? <ArrowUpRight size={22} color={COLORS.income} strokeWidth={2} />
-                : <ArrowDownLeft size={22} color={COLORS.expense} strokeWidth={2} />}
-            </View>
+    const handlePress = () => {
+    if (isSelected) {
+      setSelectedTxId(null); // Deselect if already selected
+    } else {
+      setSelectedTxId(tx.id); // Select new
+    }
+  };
 
-            <View style={styles.txDetails}>
-              <Text style={[styles.txTitle, isSelected && styles.txTitleSelected]}>{tx.title}</Text>
-              <Text style={styles.txTime}>{tx.time}</Text>
-            </View>
-          </Animated.View>
+   return (
+    <Animated.View 
+      style={[
+        styles.txCard, 
+        isSelected && styles.txCardSelected, // Highlight only if isSelected is true
+        { opacity, transform: [{ scale }] }
+      ]}
+    >
+      <TouchableOpacity
+        style={styles.txCardTouchable}
+        onPress={handlePress}
+        activeOpacity={0.9} // Higher opacity so the highlight is more visible
+      >
+        <Animated.View style={[styles.txLeft, { transform: [{ translateX: leftTranslateX }] }]}>
+          <View style={[styles.txIconBg, { backgroundColor: tx.type === 'income' ? '#0f201a' : '#1f0f0f' }]}>
+            {tx.type === 'income'
+              ? <ArrowUpRight size={22} color={COLORS.income} strokeWidth={2} />
+              : <ArrowDownLeft size={22} color={COLORS.expense} strokeWidth={2} />}
+          </View>
 
-          <Animated.View style={[styles.txRight, { transform: [{ translateX: rightTranslateX }] }]}>
-            <Text style={[styles.txAmount, { color: tx.type === 'income' ? '#10B981' : 'white' }]}>
-              {tx.type === 'income' ? '+ ' : '- '}₹{tx.amount}
+          <View style={styles.txDetails}>
+            <Text
+                         style={[styles.txTitle, isSelected && styles.txTitleSelected]}
+                         numberOfLines={isSelected ? undefined : 1}   // ✅ full lines when selected
+                         ellipsizeMode="tail"
+                       >
+              {tx.title}
             </Text>
-            <View style={styles.txCategoryRow}>
-              <View style={[styles.dot, { backgroundColor: tx.type === 'income' ? COLORS.income : COLORS.expense }]} />
-              <Text style={styles.txCategory}>{tx.category}</Text>
-            </View>
-          </Animated.View>
-        </TouchableOpacity>
-      </Animated.View>
-    );
-  });
+            <Text style={styles.txTime}>{tx.time}</Text>
+          </View>
+        </Animated.View>
+
+        <Animated.View style={[styles.txRight, { transform: [{ translateX: rightTranslateX }] }]}>
+          <Text style={[styles.txAmount, { color: tx.type === 'income' ? '#10B981' : 'white' }]}>
+            {tx.type === 'income' ? '+ ' : '- '}₹{tx.amount}
+          </Text>
+          
+          {/* CATEGORY MENTIONED BELOW AMOUNT AS REQUESTED */}
+          <View style={styles.txCategoryRow}>
+            <View style={[styles.dot, { backgroundColor: tx.type === 'income' ? COLORS.income : COLORS.expense }]} />
+            <Text style={styles.txCategory}>{tx.category}</Text>
+          </View>
+        </Animated.View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
 
   return (
     <View style={styles.container}>
@@ -295,7 +365,7 @@ const rightTranslateX = useRef(
         <TextInput
           style={styles.searchInput}
           placeholder="Search by note or category..."
-          placeholderTextColor={COLORS.gray}
+          placeholderTextColor={"#535353"}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />

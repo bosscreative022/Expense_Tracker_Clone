@@ -19,6 +19,7 @@ import {
   Trash2,
 } from 'lucide-react-native';
 import SplitProgressBar from '../screens/SplitProgressBar';
+import { createSplitGroup } from '../services/api';
 
 export default function Step1GroupDetails({ navigation }: any) {
   const [currentStep, setCurrentStep] = useState(1);
@@ -58,8 +59,14 @@ const translateXAnim = useRef(new Animated.Value(0)).current;
   // --- HELPERS ---
   const totalAmount = Number(amount || 0);
   const isValidStep1 = name.trim().length > 0 && amount.trim().length > 0;
-  const eachPays = members.length ? (totalAmount / members.length).toFixed(2) : '0.00';
+ const activeMemberCount = members.filter(m => m.paid || m.name.trim().length > 0).length;
 
+// If 0 or 1 active members, show the full total. If 2+, show the split.
+const eachPaysValue = activeMemberCount > 1 
+  ? (totalAmount / activeMemberCount) 
+  : totalAmount;
+
+const eachPays = eachPaysValue.toFixed(2);
  const handleBack = () => {
   setDirection('BACK');
   if (currentStep > 1) setCurrentStep(prev => prev - 1);
@@ -76,6 +83,47 @@ const translateXAnim = useRef(new Animated.Value(0)).current;
   const updateMemberName = (id: number, value: string) => {
     setMembers(prev => prev.map(m => (m.id === id ? { ...m, name: value } : m)));
   };
+
+
+const buildMembersPayload = () => {
+  if (tab === 'EQUAL') {
+    // Convert to number for the backend
+    const each = Number((totalAmount / members.length).toFixed(2));
+
+    return members.map(m => ({
+      name: m.paid ? 'You' : m.name || 'Member',
+      amount: each, // Changed from 'share' to 'amount'
+      status: m.paid ? 'settled' : 'pending', // Changed from 'isPaid' to 'status'
+    }));
+  }
+
+  return members.map(m => ({
+    name: m.paid ? 'You' : m.name || 'Member',
+    amount: Number(customAmounts[m.id] || 0), // Ensure this is a number
+    status: m.paid ? 'settled' : 'pending',
+  }));
+};
+
+const handleCreateGroup = async () => {
+  try {
+    const payload = {
+      name,
+      description: desc,
+      totalAmount: String(totalAmount),
+      members: buildMembersPayload(),
+    };
+
+    console.log('SPLIT PAYLOAD:', payload);
+
+    const res = await createSplitGroup(payload);
+
+    console.log('SPLIT CREATED:', res.data);
+
+    navigation.popToTop();
+  } catch (err: any) {
+    console.log('SPLIT ERROR:', err.response?.data || err.message);
+  }
+};
 
   const renderHeader = () => {
     const stepTitles = ["", "Group Details", "Add Members", "Review"];
@@ -194,7 +242,16 @@ const translateXAnim = useRef(new Animated.Value(0)).current;
             <TouchableOpacity style={styles.addMemberDashed} onPress={addMember}>
               <UserPlus size={17} color="#555" /><Text style={styles.addMemberText}>Add Member</Text>
             </TouchableOpacity>
-
+{tab === 'EQUAL' && (
+      <View style={styles.eachPaysCard}>
+        <Text style={styles.eachPaysText}>Each pays</Text>
+        <View style={styles.amountWrapper}>
+          <Text style={styles.eachPaysAmount}>
+            ₹{Number(eachPays).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+          </Text>
+        </View>
+      </View>
+    )}
             <TouchableOpacity style={styles.btnActiveFixed} onPress={() => setCurrentStep(3)}>
               <View style={styles.btnContent}><Text style={styles.btnTextActive} onPress={() => {
   setDirection('NEXT');
@@ -210,6 +267,10 @@ const translateXAnim = useRef(new Animated.Value(0)).current;
             <View style={styles.infoCard}>
               <Text style={styles.labelInter}>GROUP NAME</Text>
               <Text style={styles.groupNameFinal}>{name}</Text>
+                {desc?.trim() ? (
+    <Text style={styles.groupDescFinal}>{desc}</Text>
+  ) : null}
+
               <View style={styles.divider} />
               <Text style={styles.labelInter}>TOTAL AMOUNT</Text>
               <Text style={styles.totalAmountFinal}>₹{totalAmount}</Text>
@@ -228,7 +289,8 @@ const translateXAnim = useRef(new Animated.Value(0)).current;
                 </View>
               );
             })}
-            <TouchableOpacity style={styles.btnActiveFixed} onPress={() => navigation.popToTop()}>
+            <TouchableOpacity style={styles.btnActiveFixed} onPress={handleCreateGroup}
+>
               <Text style={styles.btnTextActive}>✓ CREATE GROUP</Text>
             </TouchableOpacity>
           </Animated.View>
@@ -269,11 +331,11 @@ const styles = StyleSheet.create({
   optionalText: { fontFamily: 'Outfit-Bold', color: '#393939', marginLeft: 4 },
   input: {
     color: '#fff', fontSize: 17, textAlign: 'left', paddingLeft: 0,
-    position: 'relative', left: -40, fontFamily: "Inter-Black", fontWeight: '900', marginTop: 5
+    position: 'relative', left: -40, fontFamily: "Inter_18pt-ExtraBold", marginTop: 5
   },
   input2: {
     color: '#fff', fontSize: 16, textAlign: 'left', paddingLeft: 0,
-    position: 'relative', left: -40, fontFamily: "Inter-Black", fontWeight: '900', marginTop: 5
+    position: 'relative', left: -40, fontFamily:"Inter_18pt-ExtraBold", marginTop: 5
   },
   amountInputRow: { flexDirection: 'row', alignItems: 'flex-end' },
   amountMain: {
@@ -303,7 +365,7 @@ const styles = StyleSheet.create({
   avatar: { width: 40, height: 40, borderRadius: 11, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   avatarText: { fontFamily: 'Inter_18pt-Black', fontSize: 15 },
   memberNameYou: { color: '#fff', fontSize: 14, fontFamily: 'Outfit-SemiBold' },
-  memberNameInput: { flex: 1, color: '#fff', fontSize: 15, fontFamily: 'Inter-Black', fontWeight: "800" },
+  memberNameInput: { flex: 1, color: '#fff', fontSize: 15, fontFamily: 'Outfit-SemiBold', },
   paidTag: {
     marginLeft: 7, backgroundColor: 'rgb(9 43 32)', paddingHorizontal: 7, paddingVertical: 2,
     borderRadius: 20, justifyContent: 'center', alignItems: 'center',
@@ -335,7 +397,7 @@ const styles = StyleSheet.create({
   // --- STEP 3 SPECIFIC ---
   infoCard: { backgroundColor: '#0b0b0b', borderRadius: 18, padding: 16, marginTop: 20, borderWidth: 1, borderColor: '#151515' },
   labelInter: { color: '#666', fontSize: 10, marginBottom: 6, fontFamily: 'Inter_18pt-Black' },
-  groupNameFinal: { color: '#fff', fontSize: 20, marginBottom: 10, fontFamily: 'Outfit-Black' },
+  groupNameFinal: { color: '#fff', fontSize: 20, fontFamily: 'Outfit-Black' },
   divider: { height: 1, backgroundColor: '#1a1a1a', marginVertical: 10 },
   totalAmountFinal: { color: '#fff', fontSize: 30, fontFamily: 'Inter_18pt-Black' },
   membersLabelInter: { color: '#666', fontSize: 10, marginTop: 16, marginBottom: 8, fontFamily: 'Inter_18pt-Black' },
@@ -346,9 +408,39 @@ const styles = StyleSheet.create({
   leftRowReview: { flexDirection: 'row', alignItems: 'center' },
   avatarWhite: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   avatarBlackText: { color: '#000', fontFamily: 'Outfit-Bold' },
-  memberNameReview: { color: '#fff', fontSize: 14, marginRight: 8, fontFamily: 'Inter-Black', fontWeight: "800" },
+  memberNameReview: { color: '#fff', fontSize: 14, marginRight: 8, fontFamily: 'Outfit-Bold',},
   memberAmountReview: { color: 'white', fontSize: 13, fontFamily: 'Inter_18pt-Black' },
-
+groupDescFinal: {
+  color: '#666',   
+  fontSize: 14,
+  marginTop: 4,
+  fontFamily: 'Inter_18pt-SemiBold',
+},
+eachPaysCard: {
+    backgroundColor: '#090909',
+    borderWidth: 1,
+    borderColor: '#151515',
+    borderRadius: 12,
+    paddingVertical: 22,
+    paddingHorizontal: 18,
+    marginTop: 20,
+    marginBottom: 100,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  eachPaysText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: 'Inter_18pt-SemiBold',
+  },
+  amountWrapper: {
+    marginLeft: 8, // This controls the "gap" between the text and the amount
+  },
+  eachPaysAmount: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontFamily: 'Inter_18pt-ExtraBold',
+  },
   // --- GLOBAL BUTTONS ---
   btn: { marginTop: 'auto', backgroundColor: '#333', padding: 17, alignItems: 'center', borderRadius: 22 },
   btnActive: { backgroundColor: '#fff', borderRadius: 22 },

@@ -40,6 +40,7 @@ import DatePicker from 'react-native-date-picker';
 import { TextInput } from 'react-native';
 import { KeyboardAvoidingView, Platform } from 'react-native';
 
+const BASE_URL = 'https://nepenthean-undeclared-gunnar.ngrok-free.dev';
 const SettingItem = ({ icon: Icon, color, title, sub, isLast, size = 18, onPress }: any) => (
   <TouchableOpacity
     style={[styles.settingRow, isLast && { borderBottomWidth: 0 }]}
@@ -66,6 +67,8 @@ export default function ProfileScreen({ navigation }: any) {
   const [savingProfile, setSavingProfile] = useState(false);
   const [email, setEmail] = useState('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
+const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
+
 
   useEffect(() => {
     const loadUserInfo = async () => {
@@ -99,48 +102,104 @@ export default function ProfileScreen({ navigation }: any) {
     }
   };
 
- const handleSaveProfile = async () => {
-    if (!editName.trim()) return;
-    try {
-      setSavingProfile(true);
-      const token = await AsyncStorage.getItem('userToken');
-      
-      // Sending the username to the API
-      const response = await API.post('/user/add-name', 
-        { name: editName }, 
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+  const handleClearAllData = async () => {
+  try {
+    const token = await AsyncStorage.getItem('userToken');
 
-      // Logging the result to the console as requested
-      console.log('✅ Username Update Success:', response.data);
-
-      // Updating local storage so the change reflects everywhere
-      await AsyncStorage.setItem('userName', editName);
-      
-      closeModal();
-    } catch (error) {
-      console.log('❌ Update name failed:', error);
-    } finally {
-      setSavingProfile(false);
-    }
-  };
-
-  const pickImage = async () => {
-    const result = await launchImageLibrary({
-      mediaType: 'photo',
-      quality: 0.7,
+    const res = await API.delete('/user/delete-data', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
-    if (result.assets?.[0]?.uri) {
-      const uri = result.assets[0].uri;
-      setProfileImage(uri);
-      await AsyncStorage.setItem('profileImage', uri);
+    console.log("✅ Data Cleared:", res.data);
+
+    // OPTIONAL — show success alert
+    alert("All data cleared successfully!");
+
+    // Close modal
+    setActiveModal(null);
+
+  } catch (error) {
+    console.log("❌ Clear Data Error:", error?.response?.data || error.message);
+    alert("Failed to clear data");
+  }
+};
+
+const handleSaveProfile = async () => {
+  const token = await AsyncStorage.getItem('userToken');
+
+  if (!editName.trim()) return;
+
+  try {
+    setSavingProfile(true);
+
+    const formData = new FormData();
+    formData.append('name', editName);
+
+    if (selectedPhoto) {
+      formData.append('profilePic', {
+        uri: Platform.OS === 'android'
+          ? selectedPhoto.uri
+          : selectedPhoto.uri.replace('file://', ''),
+        type: selectedPhoto.type || 'image/jpeg',
+        name: selectedPhoto.fileName || 'profile_picture.jpg',
+      });
     }
-  };
+
+   const token = await AsyncStorage.getItem('userToken');
+
+const response = await API.patch(
+  '/user/update-profile',
+  formData,
+  {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+      Authorization: `Bearer ${token}`,
+    },
+    transformRequest: data => data,
+  }
+);
+
+    // ✅ SAVE NAME LOCALLY (MOST IMPORTANT)
+    await AsyncStorage.setItem('userName', editName);
+
+    // ✅ UPDATE IMAGE IF CHANGED
+    const updatedImageUrl = response.data.user?.profilePic;
+
+    if (updatedImageUrl) {
+      const fullImagePath = `${BASE_URL}/${updatedImageUrl}`;
+      await AsyncStorage.setItem('profileImage', fullImagePath);
+      setProfileImage(fullImagePath);
+    }
+
+    setSelectedPhoto(null);
+    closeModal();
+
+    console.log('✅ Profile Updated Successfully');
+
+  } catch (err) {
+    console.log('❌ Profile Update Error:', err?.response?.data || err.message);
+  } finally {
+    setSavingProfile(false);
+  }
+};
+
+const pickImage = async () => {
+  const result = await launchImageLibrary({
+    mediaType: 'photo',
+    quality: 0.7,
+  });
+
+  if (result.assets?.[0]) {
+    const asset = result.assets[0];
+    setProfileImage(asset.uri || null);
+    setSelectedPhoto(asset); 
+  }
+};
 
   const closeModal = () => setActiveModal(null);
 
-  // --- MODAL SUB-COMPONENTS (Kept as they were) ---
   const CurrencyModal = ({ onClose }: any) => (
     <>
       <View style={styles.modalHeader}>
@@ -205,17 +264,28 @@ export default function ProfileScreen({ navigation }: any) {
       <>
         <View style={styles.exportIconWrap}><Download size={28} color="#60a5fa" strokeWidth={2}/></View>
         <Text style={styles.modalTitle1}>Export Transactions</Text>
-        <Text style={styles.modalSub}>Generating CSV with fields: Date, Type, Amount, Category, Description.</Text>
+        <Text style={styles.modalSub}>Select date range or download all transactions</Text>
         <Text style={styles.inputLabel}>FROM DATE</Text>
-        <TouchableOpacity style={styles.dateInput} onPress={() => setOpenFrom(true)}>
-          <Text style={styles.datePlaceholder}>{formatDate(fromDate) || 'dd-mm-yyyy'}</Text>
-          <Calendar size={16} color="#9ca3af" />
-        </TouchableOpacity>
+     <View style={styles.dateInput}>
+  <Text style={styles.datePlaceholder}>
+    {formatDate(toDate) || 'select date'}
+  </Text>
+
+  <TouchableOpacity onPress={() => setOpenTo(true)}>
+    <Calendar size={16} color="#9ca3af" />
+  </TouchableOpacity>
+</View>
+
         <Text style={[styles.inputLabel, { marginTop: 14 }]}>TO DATE</Text>
-        <TouchableOpacity style={styles.dateInput} onPress={() => setOpenTo(true)}>
-          <Text style={styles.datePlaceholder}>{formatDate(toDate) || 'dd-mm-yyyy'}</Text>
-          <Calendar size={16} color="#9ca3af" />
-        </TouchableOpacity>
+      <View style={styles.dateInput}>
+  <Text style={styles.datePlaceholder}>
+    {formatDate(toDate) || 'select date'}
+  </Text>
+
+  <TouchableOpacity onPress={() => setOpenTo(true)}>
+    <Calendar size={16} color="#9ca3af" />
+  </TouchableOpacity>
+</View>
         <DatePicker modal mode="date" open={openFrom} date={fromDate || new Date()} theme="dark" buttonColor="#3b82f6" onConfirm={(date) => { setOpenFrom(false); setFromDate(date); }} onCancel={() => setOpenFrom(false)} />
         <DatePicker modal mode="date" open={openTo} date={toDate || new Date()} theme="dark" buttonColor="#3b82f6" onConfirm={(date) => { setOpenTo(false); setToDate(date); }} onCancel={() => setOpenTo(false)} />
         <View style={styles.exportActions}>
@@ -248,10 +318,11 @@ export default function ProfileScreen({ navigation }: any) {
     <>
       <View style={styles.exportIconWrap1}><TriangleAlert size={28} color="#f97316" strokeWidth={2}/></View>
       <Text style={styles.modalTitle1}>Clear All Data?</Text>
-      <Text style={styles.modalSub1}>This will permanently delete all your transactions. This action cannot be undone.</Text>
+      <Text style={styles.modalSub1}>This will permanently delete all your transactions, splits, and investments. This action cannot be undone.</Text>
       <View style={styles.exportActions}>
         <TouchableOpacity style={styles.cancelBtn} onPress={onClose}><Text style={styles.cancelText}>Cancel</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.primaryBtn2}><Trash2 size={16} color="#fff" /><Text style={styles.primaryBtnText2}>Clear All</Text></TouchableOpacity>
+        <TouchableOpacity   style={styles.primaryBtn2}
+  onPress={handleClearAllData}><Trash2 size={16} color="#fff" /><Text style={styles.primaryBtnText2}>Clear All</Text></TouchableOpacity>
       </View>
     </>
   );
@@ -259,7 +330,7 @@ export default function ProfileScreen({ navigation }: any) {
   const AboutModal = ({ onClose }: any) => (
     <>
       <View style={styles.modalHeader}><Text style={styles.modalTitle}>About App</Text><TouchableOpacity onPress={onClose} style={styles.modalCloseIcon}><X size={16} color="#9ca3af" strokeWidth={2}/></TouchableOpacity></View>
-      <Text style={styles.modalSub}>Finance Tracker v1.0.0{'\n'}A simple and elegant way to track your income and expenses.</Text>
+      <Text style={styles.modalSub}>Finance Tracker v1.0.0.</Text><Text style={styles.modalSub}> A simple and elegant way to track your income, expenses, and split payments with friends.</Text><Text style={styles.modalSub}>Made with care.</Text>
       <TouchableOpacity style={styles.primaryBtn} onPress={onClose}><Text style={styles.primaryBtnText}>Got it</Text></TouchableOpacity>
     </>
   );
@@ -299,10 +370,14 @@ export default function ProfileScreen({ navigation }: any) {
                   <View style={{ alignItems: 'center', marginVertical: 20 }}>
                     <View style={styles.modalAvatarBox}>
                       {profileImage ? (
-                        <Image source={{ uri: profileImage }} style={styles.avatarImage} />
-                      ) : (
-                        <Text style={styles.modalAvatarInitial}>{editName.charAt(0).toUpperCase()}</Text>
-                      )}
+  <Image 
+    source={{ uri: profileImage }} 
+    style={styles.avatarImage} 
+    key={profileImage} // Adding a key forces a re-render when the URL changes
+  />
+) : (
+  <Text style={styles.avatarInitial}>{editName.charAt(0).toUpperCase()}</Text>
+)}
                       {/* Camera icon matches reference placement */}
                       <TouchableOpacity style={styles.modalCameraIcon} onPress={pickImage}>
                         <Camera size={14} color="#fff" />
@@ -458,9 +533,9 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   modalTitle: { color: '#fff', fontSize: 20, fontFamily: 'Outfit-Black' },
   modalTitle1: { color: '#fff', fontSize: 20, fontFamily: 'Outfit-Black', textAlign: 'center' },
-  modalSub: { color: '#9DA3AF', fontSize: 14, marginTop: 15, marginBottom: 20, fontFamily: 'Inter_18pt-SemiBold', lineHeight: 22 },
+  modalSub: { color: '#9DA3AF', fontSize: 14, marginTop: 10, marginBottom: 10, fontFamily: 'Inter_18pt-SemiBold', lineHeight: 22 },
   modalSub1: { color: '#9DA3AF', fontSize: 14, marginTop: 15, marginBottom: 20, fontFamily: 'Inter_18pt-SemiBold', lineHeight: 22, textAlign: 'center' },
-  email: { color: '#3b82f6', fontWeight: '600' },
+  email: { color: '#9DA3AF', fontWeight: '600' },
   
   modalCloseIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#1d1d1d', backgroundColor: '#1e1e1e' },
   modalAvatarBox: { width: 100, height: 100, borderRadius: 32, backgroundColor: '#3b82f6', justifyContent: 'center', alignItems: 'center' },
@@ -476,7 +551,7 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#fff', fontSize: 15, fontFamily: 'Inter_18pt-Black' },
   primaryBtn1: { flex: 1, backgroundColor: '#3b82f6', borderRadius: 16, height: 50, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
   primaryBtnText1: { color: '#fff', fontSize: 14, fontFamily: 'Inter_18pt-Black' },
-  primaryBtn2: { flex: 1, backgroundColor: '#f43f5e', borderRadius: 16, height: 50, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
+  primaryBtn2: { flex: 1, backgroundColor: '#f97316', borderRadius: 16, height: 50, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
   primaryBtnText2: { color: '#fff', fontSize: 14, fontFamily: 'Inter_18pt-Black' },
   cancelBtn: { flex: 1, backgroundColor: '#1a1a1a', borderRadius: 16, height: 50, alignItems: 'center', justifyContent: 'center' },
   cancelText: { color: '#ffffff', fontFamily: 'Inter_18pt-Black', fontSize: 14 },

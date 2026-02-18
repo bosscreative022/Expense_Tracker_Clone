@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, 
   Animated, StatusBar, Easing, Dimensions
@@ -6,26 +6,28 @@ import {
 import { 
   ChevronLeft, ChevronRight, TrendingUp, Target, 
   ArrowUp, ArrowDown, Check, ShoppingBag, 
-  Home, CreditCard, ShoppingCart, HelpCircle, 
-  ShoppingBasket,
-  Utensils,
-  Tv,
-  Coffee,
-  Briefcase,
-  Users,
-  ArrowUpRight,
-  ArrowDownLeft,
-  Clock,
-  CircleCheckBig
+  Home, CreditCard, ShoppingBasket,
+  Utensils, Tv, Coffee, Briefcase, Users,
+  ArrowUpRight, ArrowDownLeft, Clock,
+  CircleCheckBig, Plus, HelpCircle,
+  Car,
+  House,
+  HeartPulse,
+  Dumbbell,
+  Zap,
+  Gift,
+  Coins,
+  TrendingDown
 } from 'lucide-react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { API } from '../services/api';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, G } from 'react-native-svg';
-import { useNavigation } from '@react-navigation/native';
+
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-const { width } = Dimensions.get('window');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const horizontalPadding = SCREEN_WIDTH * 0.06;
+
 const COLORS = {
   background: '#000000',
   cardBg: '#080808',
@@ -41,103 +43,246 @@ const COLORS = {
   gray: '#4B5563',
   navBtn: '#181818'
 };
-const GAP = 6;
 const DONUT_DATA = [
   { label: 'Shopping', percent: 60, color: COLORS.cyan },
   { label: 'Rent', percent: 20, color: COLORS.purpleChart },
   { label: 'Split', percent: 12, color: COLORS.gold },
   { label: 'Grocery', percent: 8, color: COLORS.emerald },
 ];
-const CATEGORY_DATA = [
-  {
-    label: 'Shopping',
-    amount: '93,700',
-    percent: 62,
-    color: '#ec4899',
-    icon: ShoppingBag,
-  },
-  {
-    label: 'Rent',
-    amount: '23,000',
-    percent: 20,
-    color: "#4f46e5",
-    icon: Home,
-  },
-  {
-    label: 'Split',
-    amount: '12,568',
-    percent: 12,
-    color: COLORS.gold,
-    icon: CreditCard,
-  },
-  {
-    label: 'Grocery',
-    amount: '2,000',
-    percent: 8,
-    color: "#14b8a6",
-    icon: ShoppingBasket,
-  },
-   {
-    label: 'Groceries',
-    amount: '2,000',
-    percent: 2,
-    color: "#64748b",
-    icon: HelpCircle,
-  },
-   {
-    label: 'Food',
-    amount: '2,000',
-    percent: 18,
-    color: "#f97316",
-    icon: Utensils,
-  },
-   {
-    label: 'Entertain',
-    amount: '2,000',
-    percent: 67,
-    color: "#f43f5e",
-    icon: Tv,
-  },
-   {
-    label: 'Coffee',
-    amount: '2,000',
-    percent: 89,
-    color: "#d97706",
-    icon: Coffee,
-  },
-   {
-    label: 'Education',
-    amount: '2,000',
-    percent: 58,
-    color: "#2563eb",
-    icon: Briefcase,
-  },
-   
-];
-
-
-const WEEKLY_TREND = [
-  { label: 'W1', in: 40, out: 20 },
-  { label: 'W2', in: 95, out: 45 },
-  { label: 'W3', in: 25, out: 75 },
-  { label: 'W4', in: 15, out: 12 },
-];
+const filterByMonth = (data, date) => {
+  if (!data) return [];
+  const month = date.getMonth();
+  const year = date.getFullYear();
+  return data.filter(t => {
+    const d = new Date(t.date);
+    return d.getMonth() === month && d.getFullYear() === year;
+  });
+};
 
 export default function AnalyticsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const [activeTab, setActiveTab] = useState('OVERVIEW');
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 0, 1));
+  const [transactions, setTransactions] = useState([]);
+  
+  const [currentDate, setCurrentDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1); 
+  });
+
+  const [summary, setSummary] = useState({
+    totalIn: 0, totalOut: 0, netFlow: 0, savingsPercent: 0, dailyAvg: 0,
+  });
+
+  const [splitSummary, setSplitSummary] = useState({
+    toRecover: 0, received: 0, yourShare: 0, totalGroups: 0, activeGroups: 0, doneGroups: 0,
+  });
+const dynamicWeeklyTrend = React.useMemo(() => {
+  const weeks = [
+    { label: 'W1', in: 0, out: 0 },
+    { label: 'W2', in: 0, out: 0 },
+    { label: 'W3', in: 0, out: 0 },
+    { label: 'W4', in: 0, out: 0 },
+    { label: 'W5', in: 0, out: 0 },
+  ];
+
+  const monthlyData = filterByMonth(transactions, currentDate);
+
+  // 1. Process regular transactions
+  monthlyData.forEach(t => {
+    const day = new Date(t.date).getDate();
+    const amount = parseFloat(t.amount) || 0;
+    let weekIdx = Math.min(Math.floor((day - 1) / 7), 4);
+
+    const type = t.type?.toLowerCase();
+    if (type === 'income') weeks[weekIdx].in += amount;
+    else if (type === 'expense' || type === 'split') weeks[weekIdx].out += amount;
+  });
+
+  // 2. Inject the second API source (Split Received)
+  // Since received splits might not have individual dates in the summary, 
+  // we add them to the current week of the month so the "Total In" matches.
+  const now = new Date();
+  const isCurrentMonth = currentDate.getMonth() === now.getMonth() && 
+                         currentDate.getFullYear() === now.getFullYear();
+  
+  if (isCurrentMonth && splitSummary.received > 0) {
+    const currentWeekIdx = Math.min(Math.floor((now.getDate() - 1) / 7), 4);
+    weeks[currentWeekIdx].in += Number(splitSummary.received);
+  }
+
+  // 3. Calculate scaling
+  const maxVal = Math.max(...weeks.flatMap(w => [w.in, w.out]), 1);
+  const CHART_HEIGHT = 100;
+  const scaleFactor = CHART_HEIGHT / (maxVal * 1.1);
+
+  return weeks.map(w => ({
+    ...w,
+    inHeight: w.in * scaleFactor,
+    outHeight: w.out * scaleFactor,
+    actualIn: w.in,
+    actualOut: w.out
+  }));
+  
+}, [transactions, currentDate, splitSummary.received]); // Added splitSummary as dependency
+
+  useEffect(() => {
+  console.log('--- Weekly Trend Debug ---');
+  console.log('Month:', currentDate.toLocaleString('default', { month: 'long' }));
+  dynamicWeeklyTrend.forEach(week => {
+    console.log(`${week.label} -> IN: ₹${week.actualIn}, OUT: ₹${week.actualOut}`);
+  });
+}, [dynamicWeeklyTrend]);
 
   // --- Animation Refs ---
-  const fadeAnims = useRef([...Array(10)].map(() => new Animated.Value(0))).current;
-  const slideAnims = useRef([...Array(10)].map(() => new Animated.Value(30))).current;
-  const barAnims = useRef(WEEKLY_TREND.map(() => ({ in: new Animated.Value(0), out: new Animated.Value(0) }))).current;
+  const fadeAnims = useRef([...Array(12)].map(() => new Animated.Value(0))).current;
+  const slideAnims = useRef([...Array(12)].map(() => new Animated.Value(30))).current;
   
-  // Individual segment animations for sequential filling
- const segmentAnims = useRef(DONUT_DATA.map(() => new Animated.Value(0))).current;
-const progressAnims = useRef(CATEGORY_DATA.map(() => new Animated.Value(0))).current;
+  // Updated barAnims to 6 slots for safety
+  const barAnims = useRef([...Array(6)].map(() => ({ 
+    in: new Animated.Value(0), 
+    out: new Animated.Value(0) 
+  }))).current;
 
+  const segmentAnims = useRef(DONUT_DATA.map(() => new Animated.Value(0))).current;
+  const progressAnims = useRef([...Array(20)].map(() => new Animated.Value(0))).current;
+
+  // --- Logic & Fetching ---
+const fetchTransactions = async () => {
+  try {
+    const userId = await AsyncStorage.getItem("userId");
+    const res = await API.get(`/user/transaction/${userId}`);
+    if (res.data.success) {
+      console.log('Fetched transactions:', res.data.data);
+      setTransactions(res.data.data);
+    }
+  } catch (err) { console.log("Transaction Fetch Error:", err); }
+};
+
+  const fetchSplitSummary = async () => {
+    
+    try {
+      const userId = await AsyncStorage.getItem("userId");
+      if (!userId) return;
+      const res = await API.get(`/user/split/${userId}`);
+      if (res.data.success) {
+        const allGroups = res.data.data || [];
+        const currentMonth = currentDate.getMonth();
+        const currentYear = currentDate.getFullYear();
+        const filteredGroups = allGroups.filter(group => {
+          const groupDate = new Date(group.createdAt || group.date);
+          return groupDate.getMonth() === currentMonth && groupDate.getFullYear() === currentYear;
+        });
+
+        let toRecover = 0, received = 0, yourShare = 0, activeGroups = 0, doneGroups = 0;
+        filteredGroups.forEach(group => {
+          const members = group.members || [];
+          const myEntry = members.find(m => m.id === userId || m.name === "You");
+          if (myEntry) yourShare += Number(myEntry.amount || 0);
+
+          let isGroupFullySettled = true;
+          members.forEach(member => {
+            const isMe = member.id === userId || member.name === "You";
+            if (!isMe) {
+              const amt = Number(member.amount || 0);
+              if (member.status === 'settled' || member.status === 'paid') received += amt;
+              else { toRecover += amt; isGroupFullySettled = false; }
+            }
+          });
+          isGroupFullySettled ? doneGroups++ : activeGroups++;
+        });
+
+        const totalVolume = toRecover + received;
+        setSplitSummary({
+          toRecover, received, yourShare, totalGroups: filteredGroups.length,
+          activeGroups, doneGroups, completionPercent: totalVolume > 0 ? Math.round((received / totalVolume) * 100) : 0
+        });
+      }
+    } catch (err) { console.log("Split Summary Fetch Error:", err.message); }
+  };
+
+const calculateSummary = (data = [], splitData = {}) => {
+  let totalIn = 0, totalOut = 0;
+  data.forEach((t) => {
+    const amount = Number(t.amount) || 0;
+    const type = t.type?.toLowerCase();
+    if (type === 'income') {
+      totalIn += amount;
+    } else if (type === 'expense' || type === 'split') {
+      totalOut += amount;
+    } else {
+      // fallback: treat unknown as expense (shouldn't happen)
+      totalOut += amount;
+    }
+  });
+
+  // Add money you've already received from split members
+  totalIn += Number(splitData.received) || 0;
+
+  const netFlow = totalIn - totalOut;
+  setSummary({
+    totalIn,
+    totalOut,
+    netFlow,
+    savingsPercent: totalIn > 0 ? (netFlow / totalIn) * 100 : 0,
+    dailyAvg: totalOut / 30,
+  });
+
+  console.log('Filtered transactions for month:', data);
+  console.log('TotalIn:', totalIn, 'TotalOut:', totalOut);
+};
+
+  const processedExpenseData = React.useMemo(() => {
+    const currentMonth = currentDate.getMonth();
+    const currentYear = currentDate.getFullYear();
+   const monthlyExpenses = transactions.filter(t => {
+  const d = new Date(t.date);
+  const type = t.type?.toLowerCase();
+  return (type === 'expense' || type === 'split') &&
+         d.getMonth() === currentMonth &&
+         d.getFullYear() === currentYear;
+});
+    const totalMonthlyVal = monthlyExpenses.reduce((sum, t) => sum + Number(t.amount || 0), 0);
+    const CATEGORY_CONFIG = [
+      { name: 'Food', icon: Utensils, color: '#f97316' },
+  { name: 'Shopping', icon: ShoppingBag, color: '#ec4899' },
+  { name: 'Transport', icon: Car, color: '#3b82f6' },
+  { name: 'Housing', icon: House, color: '#6366f1' },
+  { name: 'Entertain', icon: Tv, color: '#f43f5e' },
+  { name: 'Health', icon: HeartPulse, color: '#10b981' },
+  { name: 'Fitness', icon: Dumbbell, color: '#8b5cf6' },
+  { name: 'Grocery', icon: ShoppingBasket, color: '#14b8a6' },
+  { name: 'Bills', icon: Zap, color: '#f59e0b' },
+  { name: 'Travel', icon: Car, color: '#06b6d4' },
+  { name: 'Education', icon: Briefcase, color: '#2563eb' },
+  { name: 'Personal', icon: HeartPulse, color: '#db2777' },
+  { name: 'Gifts', icon: Gift, color: '#e11d48' },
+  { name: 'Rent', icon: Home, color: '#4f46e5' },
+   { name: 'Coffee', icon: Coffee, color: '#d97706' },
+  { name: 'Insurance', icon: HeartPulse, color: '#ef4444' },
+  { name: 'Investment', icon: Coins, color: '#047857' },
+  { name: 'Other', icon: Plus, color: '#64748b' },
+  { name: 'Split', icon: Users, color: '#3b82f6' },
+    ];
+   const categoryMap = monthlyExpenses.reduce((acc, t) => {
+  let cat = t.category || 'Other';
+
+  // If the type is split, force the category name to 'Split'
+  if ((t.type || '').toLowerCase() === 'split') {
+    cat = 'Split';
+  }
+
+  acc[cat] = (acc[cat] || 0) + Number(t.amount || 0);
+  return acc;
+}, {});
+    const formatted = Object.keys(categoryMap).map(catName => {
+      const amount = categoryMap[catName];
+      const config = CATEGORY_CONFIG.find(c => c.name.toLowerCase() === catName.toLowerCase()) || CATEGORY_CONFIG.find(c => c.name === 'Other');
+      return { label: catName, amount, percent: totalMonthlyVal > 0 ? Math.round((amount / totalMonthlyVal) * 100) : 0, color: config.color, icon: config.icon };
+    }).sort((a, b) => b.amount - a.amount);
+
+    return { breakdown: formatted, donut: formatted.slice(0, 4), totalCategories: formatted.length, totalSpent: totalMonthlyVal };
+  }, [transactions, currentDate]);
 
 const runAnimations = useCallback(() => {
   // --- RESET all animation values ---
@@ -147,131 +292,253 @@ const runAnimations = useCallback(() => {
   segmentAnims.forEach(anim => anim.setValue(0));
   progressAnims.forEach(anim => anim.setValue(0));
 
-  // --- 1. Entry Fade & Slide ---
+  // --- Entry animations ---
   const popIn = fadeAnims.map((anim, i) =>
     Animated.parallel([
-      Animated.timing(anim, { toValue: 1, duration: 450, useNativeDriver: true }),
-      Animated.timing(slideAnims[i], { toValue: 0, duration: 450, useNativeDriver: true })
+      Animated.timing(anim, {
+        toValue: 1,
+        duration: 450,
+        useNativeDriver: true
+      }),
+      Animated.timing(slideAnims[i], {
+        toValue: 0,
+        duration: 450,
+        useNativeDriver: true
+      })
     ])
   );
 
-  // --- 2. Specific View Animations ---
+  // --- Detail Animations ---
   let detailAnims = [];
 
   if (activeTab === 'OVERVIEW') {
-    // Weekly bars animation stays intact
+    // Weekly Trend Bars
+    detailAnims = dynamicWeeklyTrend.flatMap((item, i) => [
+      Animated.timing(barAnims[i].in, {
+        toValue: item.inHeight,
+        duration: 800,
+        easing: Easing.out(Easing.exp),
+        useNativeDriver: false
+      }),
+      Animated.timing(barAnims[i].out, {
+        toValue: item.outHeight,
+        duration: 800,
+        easing: Easing.out(Easing.exp),
+        useNativeDriver: false
+      })
+    ]);
+
+  } else if (activeTab === 'EXPENSES') {
+    // Donut Segments Animation
     detailAnims = [
-      ...barAnims.map((bar, i) =>
-        Animated.timing(bar.in, { toValue: WEEKLY_TREND[i].in, duration: 800, useNativeDriver: false })
+      Animated.stagger(
+        150,
+        segmentAnims.map(anim =>
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 400,
+            easing: Easing.bezier(0.4, 0.0, 0.2, 1),
+            useNativeDriver: false
+          })
+        )
       ),
-      ...barAnims.map((bar, i) =>
-        Animated.timing(bar.out, { toValue: WEEKLY_TREND[i].out, duration: 800, useNativeDriver: false })
+
+      // Category Progress Bars
+      Animated.stagger(
+        100,
+        progressAnims.map(anim =>
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 800,
+            easing: Easing.out(Easing.exp),
+            useNativeDriver: false
+          })
+        )
       )
     ];
-  } else if (activeTab === 'EXPENSES') {
-    // Donut segments animation
-    detailAnims = [
-      Animated.stagger(150, segmentAnims.map(anim =>
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 400,
-          easing: Easing.bezier(0.4, 0.0, 0.2, 1),
-          useNativeDriver: false
-        })
-      )),
-      // Category progress bars
-      Animated.stagger(100, progressAnims.map(anim =>
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.out(Easing.exp),
-          useNativeDriver: false
-        })
-      ))
-    ];
+
   } else if (activeTab === 'SPLITS') {
-    // SPLITS animations (progress bars)
+    // Split Progress Bars
     detailAnims = [
-      Animated.stagger(100, progressAnims.map(anim =>
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 800,
-          easing: Easing.out(Easing.exp),
-          useNativeDriver: false
-        })
-      ))
+      Animated.stagger(
+        100,
+        progressAnims.map(anim =>
+          Animated.timing(anim, {
+            toValue: 1,
+            duration: 800,
+            easing: Easing.out(Easing.exp),
+            useNativeDriver: false
+          })
+        )
+      )
     ];
   }
 
-  // --- 3. Run everything ---
+  // --- Run Animations ---
   Animated.sequence([
     Animated.stagger(60, popIn),
     Animated.parallel(detailAnims)
   ]).start();
-}, [activeTab]);
+
+}, [dynamicWeeklyTrend, activeTab]);
+
+ 
+useEffect(() => {
+  const filtered = filterByMonth(transactions, currentDate);
+  calculateSummary(filtered, splitSummary);
+}, [currentDate, transactions, splitSummary]); 
+
+  useEffect(() => { runAnimations(); }, [dynamicWeeklyTrend, activeTab, currentDate]);
+ 
+ 
+   useFocusEffect(useCallback(() => {
+     fetchTransactions();
+     fetchSplitSummary();
+     const interval = setInterval(fetchSplitSummary, 3000);
+     return () => clearInterval(interval);
+   }, [currentDate]));
+
+ const formatCurrency = (amount) =>
+  new Intl.NumberFormat("en-IN", {
+    maximumFractionDigits: 0,
+  }).format(amount || 0);
 
 
-  useFocusEffect(runAnimations);
-
-  // --- Sub-Renders ---
-
+  const goToNextMonth = () => {
+  setCurrentDate(prev => {
+    const next = new Date(prev);
+    next.setMonth(next.getMonth() + 1);
+    return next;
+  });
+};
+  const goToPrevMonth = () => {
+  setCurrentDate(prev => {
+    const prevDate = new Date(prev);
+    prevDate.setMonth(prevDate.getMonth() - 1);
+    return prevDate;
+  });
+};
+  // --- Renders ---
   const renderOverview = () => (
+    
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      {/* Net Flow Card */}
-      <Animated.View style={[styles.baseCard, styles.netFlowCard, { opacity: fadeAnims[0], transform: [{ translateY: slideAnims[0] }] }]}>
-        <View style={styles.netFlowHeader}>
-          <View style={[styles.iconBox, { backgroundColor: COLORS.income }]}><TrendingUp color="white" size={20} /></View>
-          <View>
-            <Text style={styles.labelSmall}>NET FLOW</Text>
-            <Text style={[styles.valueLarge, { color: COLORS.income }]}>+₹143.33</Text>
-          </View>
+     <Animated.View
+  style={[
+    styles.baseCard,
+    styles.netFlowCard,
+    { opacity: fadeAnims[0], transform: [{ translateY: slideAnims[0] }] }
+  ]}
+>
+  {/** Determine icon and colors dynamically */}
+  {(() => {
+    const isNegative = summary.netFlow < 0;
+    const IconComponent = isNegative ? TrendingDown : TrendingUp;
+    const bgColor = isNegative ? COLORS.expense : COLORS.income;
+    const textColor = isNegative ? '#fb7185' : COLORS.income;
+
+    return (
+      <View style={styles.netFlowHeader}>
+        <View style={[styles.iconBox, { backgroundColor: bgColor }]}>
+          <IconComponent color="white" size={20} />
         </View>
-        <View style={styles.subCardRow}>
-          <View style={styles.miniSubCard}><View style={styles.cardContentRow}><View style={[styles.miniIconBox, { backgroundColor: COLORS.income }]}><ArrowUp color="white" size={14} /></View><View><Text style={styles.labelSmall}>IN</Text><Text style={styles.valueMedium}>₹150,161.33</Text></View></View></View>
-          <View style={styles.miniSubCard}><View style={styles.cardContentRow}><View style={[styles.miniIconBox, { backgroundColor: COLORS.expense }]}><ArrowDown color="white" size={14} /></View><View><Text style={styles.labelSmall}>OUT</Text><Text style={styles.valueMedium}>₹150,018</Text></View></View></View>
+        <View>
+          <Text style={styles.labelSmall}>NET FLOW</Text>
+          <Text style={[styles.valueLarge, { color: summary.netFlow < 0 ? '#FB7185' : COLORS.income }]}>
+  {summary.netFlow < 0 ? '-' : '+'}₹{formatCurrency(Math.abs(summary.netFlow))}
+</Text>
         </View>
-      </Animated.View>
+      </View>
+    );
+  })()}
+
+  <View style={styles.subCardRow}>
+    <View style={styles.miniSubCard}>
+      <View style={styles.cardContentRow}>
+        <View style={[styles.miniIconBox, { backgroundColor: COLORS.income }]}>
+          <ArrowUp color="white" size={14} />
+        </View>
+        <View>
+          <Text style={styles.labelSmall}>IN</Text>
+          <Text style={styles.valueMedium}>₹{formatCurrency(summary.totalIn)}</Text>
+        </View>
+      </View>
+    </View>
+    <View style={styles.miniSubCard}>
+      <View style={styles.cardContentRow}>
+        <View style={[styles.miniIconBox, { backgroundColor: COLORS.expense }]}>
+          <ArrowDown color="white" size={14} />
+        </View>
+        <View>
+          <Text style={styles.labelSmall}>OUT</Text>
+          <Text style={styles.valueMedium}>₹{formatCurrency(summary.totalOut)}</Text>
+        </View>
+      </View>
+    </View>
+  </View>
+</Animated.View>
+
 
       <View style={styles.subCardRow}>
-        <Animated.View style={[styles.halfCard, { opacity: fadeAnims[1], transform: [{ translateY: slideAnims[1] }] }]}>
-          <View style={styles.cardIconRow}><View style={[styles.iconBoxSmall, { backgroundColor: '#072a30' }]}><TrendingUp color={COLORS.cyan} size={12} /></View><Text style={styles.cardLabel}>SAVINGS</Text></View>
-          <Text style={[styles.cardValueLarge, { color: COLORS.gold }]}>0%</Text>
-        </Animated.View>
+      <Animated.View style={[styles.halfCard, { opacity: fadeAnims[1], transform: [{ translateY: slideAnims[1] }] }]}>
+  <View style={styles.cardIconRow}>
+    <View style={[styles.iconBoxSmall, { backgroundColor: '#072a30' }]}>
+      <TrendingUp color={COLORS.cyan} size={12} />
+    </View>
+    <Text style={styles.cardLabel}>SAVINGS</Text>
+  </View>
+  <Text
+    style={[
+      styles.cardValueLarge,
+      { color: summary.savingsPercent < 0 ? '#fb7185': COLORS.income }
+    ]}
+  >
+    {summary.savingsPercent.toFixed(0)}%
+  </Text>
+</Animated.View>
+
         <Animated.View style={[styles.halfCard, { opacity: fadeAnims[2], transform: [{ translateY: slideAnims[2] }] }]}>
           <View style={styles.cardIconRow}><View style={[styles.iconBoxSmall, { backgroundColor: '#281737' }]}><Target color={COLORS.purpleChart} size={12} /></View><Text style={styles.cardLabel}>DAILY AVG</Text></View>
-          <Text style={styles.cardValueLarge}>₹5,001</Text>
+          <Text style={styles.cardValueLarge}>₹{formatCurrency(summary.dailyAvg)}</Text>
         </Animated.View>
       </View>
 
-      {/* Weekly Trend Chart */}
       <Animated.View style={[styles.baseCard, styles.chartCard, { opacity: fadeAnims[3], transform: [{ translateY: slideAnims[3] }] }]}>
-        <View style={styles.chartHeader}><Text style={styles.chartTitle}>WEEKLY TREND</Text><View style={styles.legend}><View style={[styles.dot, { backgroundColor: COLORS.income }]} /><Text style={styles.legendText}>IN</Text><View style={[styles.dot, { backgroundColor: COLORS.expense, marginLeft: 8 }]} /><Text style={styles.legendText}>OUT</Text></View></View>
-        <View style={styles.chartContainer}>{WEEKLY_TREND.map((item, i) => (
-          <View key={i} style={styles.chartColumn}><View style={styles.barStack}><Animated.View style={[styles.bar, { backgroundColor: COLORS.income, height: barAnims[i].in }]} /><Animated.View style={[styles.bar, { backgroundColor: COLORS.expense, height: barAnims[i].out }]} /></View><Text style={styles.weekText}>{item.label}</Text></View>
-        ))}</View>
-      </Animated.View>
-
-   <Animated.View style={{ opacity: fadeAnims[4], transform: [{ translateY: slideAnims[4] }] }}>
-      <TouchableOpacity 
-        style={styles.recoverCard} 
-        activeOpacity={0.7}
-     onPress={() => setActiveTab('SPLITS')}
-      >
-        <View style={styles.recoverLeft}>
-          <View style={styles.recoverIconBox}>
-            <Users color="#fbbf24" size={20} />
-          </View>
-          <View>
-            <Text style={styles.recoverLabel}>TO RECOVER</Text>
-            <Text style={styles.recoverValue}>₹56,529.5</Text>
+        <View style={styles.chartHeader}>
+          <Text style={styles.chartTitle}>WEEKLY TREND</Text>
+          <View style={styles.legend}>
+            <View style={[styles.dot, { backgroundColor: COLORS.income }]} /><Text style={styles.legendText}>IN</Text>
+            <View style={[styles.dot, { backgroundColor: COLORS.expense, marginLeft: 8 }]} /><Text style={styles.legendText}>OUT</Text>
           </View>
         </View>
-        <ChevronRight color="#93A3AF" size={18} strokeWidth={2}/>
-      </TouchableOpacity>
-    </Animated.View>
-  </ScrollView>
-);
+        <View style={styles.chartContainer}>
+          {dynamicWeeklyTrend.map((item, i) => (
+            <View key={i} style={styles.chartColumn}>
+              <View style={styles.barStack}>
+                <Animated.View style={[styles.bar, { backgroundColor: COLORS.income, height: barAnims[i].in, minHeight: item.inHeight > 0 ? 2 : 0 }]} />
+                <Animated.View style={[styles.bar, { backgroundColor: COLORS.expense, height: barAnims[i].out, minHeight: item.outHeight > 0 ? 2 : 0 }]} />
+              </View>
+              <Text style={styles.weekText}>{item.label}</Text>
+            </View>
+          ))}
+        </View>
+      </Animated.View>
+
+      <Animated.View style={{ opacity: fadeAnims[4], transform: [{ translateY: slideAnims[4] }] }}>
+        <TouchableOpacity style={styles.recoverCard} activeOpacity={0.7} onPress={() => setActiveTab('SPLITS')}>
+          <View style={styles.recoverLeft}>
+            <View style={styles.recoverIconBox}><Users color="#fbbf24" size={20} /></View>
+            <View><Text style={styles.recoverLabel}>TO RECOVER</Text><Text style={styles.recoverValue}>₹{formatCurrency(splitSummary.toRecover)}</Text></View>
+          </View>
+          <ChevronRight color="#93A3AF" size={18} />
+        </TouchableOpacity>
+      </Animated.View>
+    </ScrollView>
+  );
+
 const renderExpenses = () => {
+  const currentDonutData = processedExpenseData.donut;
+  const currentBreakdown = processedExpenseData.breakdown;
+  const hasData = currentBreakdown.length > 0;
   const size = 120;
   const strokeWidth = 22;
   const center = size / 2;
@@ -282,34 +549,30 @@ const renderExpenses = () => {
   const totalGapDegrees = gapDegrees * DONUT_DATA.length;
   const availableDegrees = 360 - totalGapDegrees;
 
-  // Start at -180 to align with the top/center after scale flip
   let cumulativeRotation = -180;
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Animated.View style={[styles.baseCard, styles.donutCard, { opacity: fadeAnims[0], transform: [{ translateY: slideAnims[0] }] }]}>
         <Text style={styles.totalSpentLabel}>TOTAL SPENT</Text>
-        <Text style={styles.totalSpentValue}>₹150,018</Text>
+        <Text style={styles.totalSpentValue}>
+  ₹{formatCurrency(summary.totalOut)}
+</Text>
 
         <View style={styles.donutWrapper}>
           <View style={[styles.svgContainer, { width: size, height: size }]}>
             <Svg width={size} height={size}>
-              {/* Apply scaleX={-1} to flip the coordinate system for anticlockwise flow */}
               <G origin={`${center}, ${center}`} scaleX={-1}>
-                {/* Background Track */}
                 <Circle 
                   cx={center} cy={center} r={radius} 
                   stroke="#111" strokeWidth={strokeWidth} fill="transparent" 
                 />
-
-                {/* Donut Segments */}
-                {DONUT_DATA.map((item, i) => {
+                {currentDonutData.map((item, i) => {
                   const segmentDegrees = (item.percent / 100) * availableDegrees;
                   const strokeLength = (segmentDegrees / 360) * circumference;
                   const strokeOffset = circumference - strokeLength;
 
                   const rotation = cumulativeRotation;
-                  // Increasing rotation moves the segment "left" visually due to scaleX(-1)
                   cumulativeRotation += (segmentDegrees + gapDegrees);
 
                   return (
@@ -333,13 +596,13 @@ const renderExpenses = () => {
             </Svg>
 
             <View style={styles.donutTextContainer}>
-              <Text style={styles.donutMainText}>11</Text>
+              <Text style={styles.donutMainText}>{processedExpenseData.totalCategories}</Text>
               <Text style={styles.donutSubText}>CATEGORIES</Text>
             </View>
           </View>
 
           <View style={styles.donutLegend}>
-            {DONUT_DATA.slice(0, 5).map((item, i) => (
+            {currentDonutData.slice(0, 5).map((item, i) => (
               <View key={i} style={styles.legendRow}>
                 <View style={[styles.legendDot, { backgroundColor: item.color }]} />
                 <Text style={styles.legendLabel} numberOfLines={1}>{item.label}</Text>
@@ -351,48 +614,53 @@ const renderExpenses = () => {
       </Animated.View>
 
       <Text style={styles.sectionHeader}>CATEGORY BREAKDOWN</Text>
-
-      {CATEGORY_DATA.map((item, i) => (
-        <Animated.View 
-          key={i} 
-          style={[
-            styles.baseCard, 
-            styles.breakdownCard, 
-            { opacity: fadeAnims[i+1], transform: [{ translateY: slideAnims[i+1] }] }
-          ]}
-        >
-          <View style={[styles.categoryIcon, { backgroundColor: item.color }]}>
-            <item.icon color="#ffffff" size={20} strokeWidth={2.5} />
-          </View>
-
-          <View style={styles.categoryInfo}>
-            <View style={styles.categoryTopRow}>
-              <Text style={styles.categoryTitle}>{item.label}</Text>
-              <Text style={styles.categoryAmount}>₹{item.amount}</Text>
+{hasData ? (
+        currentBreakdown.map((item, i) => (
+          <Animated.View 
+            key={i} 
+            style={[
+              styles.baseCard, 
+              styles.breakdownCard, 
+              { opacity: fadeAnims[i+1] || 1, transform: [{ translateY: slideAnims[i+1] || 0 }] }
+            ]}
+          >
+            <View style={[styles.categoryIcon, { backgroundColor: item.color }]}>
+              <item.icon color="#ffffff" size={20} strokeWidth={2.5} />
             </View>
-            
-            <View style={styles.progressRow}>
-              <View style={styles.progressBarContainer}>
-                <Animated.View style={[styles.progressBarFill, { 
-                  backgroundColor: item.color, 
-                  width: progressAnims[i].interpolate({ 
-                    inputRange: [0, 1], 
-                    outputRange: ['0%', `${item.percent}%`] 
-                  }) 
-                }]} />
+
+            <View style={styles.categoryInfo}>
+              <View style={styles.categoryTopRow}>
+                <Text style={styles.categoryTitle}>{item.label}</Text>
+                <Text style={styles.categoryAmount}>₹{formatCurrency(item.amount)}</Text>
               </View>
-              <Text style={styles.inlinePercent}>{item.percent}%</Text>
+              
+              <View style={styles.progressRow}>
+                <View style={styles.progressBarContainer}>
+                  <Animated.View style={[styles.progressBarFill, { 
+                    backgroundColor: item.color, 
+                    width: progressAnims[i] ? progressAnims[i].interpolate({ 
+                      inputRange: [0, 1], 
+                      outputRange: ['0%', `${item.percent}%`] 
+                    }) : `${item.percent}%`
+                  }]} />
+                </View>
+                <Text style={styles.inlinePercent}>{item.percent}%</Text>
+              </View>
             </View>
-          </View>
-        </Animated.View>
-      ))}
+          </Animated.View>
+        ))
+      ) : (
+        <View style={styles.emptyContainer}>
+            <ShoppingBag size={40} color="#222" style={{ marginBottom: 12 }} />
+            <Text style={styles.emptyText}>No transactions this month</Text>
+        </View>
+      )}
     </ScrollView>
   );
 };
 
-  // --- Render Splits Tab (Matches Image) ---
   const renderSplits = () => {
-    const completionPercent = 16; // Based on image
+    const completionPercent = splitSummary.completionPercent || 0;
 
     return (
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -400,8 +668,11 @@ const renderExpenses = () => {
         {/* Hero Card: Amount to Recover */}
         <Animated.View style={[styles.baseCard, styles.splitHeroCard, { opacity: fadeAnims[0], transform: [{ translateY: slideAnims[0] }] }]}>
           <Text style={styles.recoverLabelCenter}>AMOUNT TO RECOVER</Text>
-          <Text style={styles.recoverValueLarge}>₹56,529.5</Text>
-          <Text style={styles.pendingGroupsText}>from 21 pending groups</Text>
+          <Text style={styles.recoverValueLarge}>
+  ₹{formatCurrency(splitSummary.toRecover)}
+</Text>
+
+          <Text style={styles.pendingGroupsText}>from {splitSummary.activeGroups} active {splitSummary.activeGroups === 1 ? 'group' : 'groups'} this month </Text>
         </Animated.View>
 
         {/* Received vs Share Row */}
@@ -413,7 +684,7 @@ const renderExpenses = () => {
               </View>
               <Text style={styles.cardLabel}>RECEIVED</Text>
             </View>
-            <Text style={[styles.cardValueLarge1, { color: "#34D399" }]}>₹16,808.33</Text>
+            <Text style={[styles.cardValueLarge1, { color: "#34D399" }]}>₹{formatCurrency(splitSummary.received)}</Text>
             <Text style={styles.dateSub1}>this month</Text>
           </Animated.View>
 
@@ -424,7 +695,8 @@ const renderExpenses = () => {
               </View>
               <Text style={styles.cardLabel}>YOUR SHARE</Text>
             </View>
-            <Text style={[styles.cardValueLarge1, { color: '#fb7185' }]}>₹12,568</Text>
+            <Text style={[styles.cardValueLarge1, { color: '#fb7185' }]}>₹{formatCurrency(splitSummary.yourShare)}
+</Text>
             <Text style={styles.dateSub1}>paid by you</Text>
           </Animated.View>
         </View>
@@ -452,7 +724,10 @@ const renderExpenses = () => {
           <View style={styles.statusGrid}>
             <View style={styles.statusBox1}>
               <Text style={styles.statusLabel1}>TOTAL</Text>
-              <Text style={styles.statusNumber1}>25</Text>
+              <Text style={styles.statusNumber1}>
+  {splitSummary.totalGroups}
+</Text>
+
             </View>
            <View
   style={[
@@ -469,7 +744,7 @@ const renderExpenses = () => {
   </View>
 
   <Text style={[styles.statusNumber, { color: COLORS.income }]}>
-    4
+    {splitSummary.doneGroups}
   </Text>
 </View>
 
@@ -487,15 +762,15 @@ const renderExpenses = () => {
     </Text>
   </View>
 
-  <Text style={[styles.statusNumber, { color: COLORS.gold }]}>
-    21
-  </Text>
+ <Text style={[styles.statusNumber, { color: COLORS.gold }]}>
+  {splitSummary.activeGroups}
+</Text>
+
 </View>
 
           </View>
         </Animated.View>
 
-        {/* Manage Button */}
       <Animated.View
   style={{ opacity: fadeAnims[4], transform: [{ translateY: slideAnims[4] }] }}
 >
@@ -516,38 +791,40 @@ const renderExpenses = () => {
       </ScrollView>
     );
   };
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.header}><Text style={styles.headerTitle}>Insights</Text></View>
-      
-      {/* Date Selector */}
-      <View style={styles.dateSelector}>
-        <TouchableOpacity style={styles.navBtn}><ChevronLeft color={COLORS.textSecondary} size={18} /></TouchableOpacity>
-        <View style={styles.dateTextContainer}><Text style={styles.dateMain}>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</Text><Text style={styles.dateSub}>57 TRANSACTIONS</Text></View>
-        <TouchableOpacity style={styles.navBtn}><ChevronRight color={COLORS.textSecondary} size={18} /></TouchableOpacity>
+   <View style={[styles.container, { paddingTop: insets.top }]}>
+        <StatusBar barStyle="light-content" />
+        <View style={styles.header}><Text style={styles.headerTitle}>Insights</Text></View>
+        
+        {/* Date Selector */}
+        <View style={styles.dateSelector}>
+          <TouchableOpacity style={styles.navBtn}  onPress={goToPrevMonth}><ChevronLeft color={COLORS.textSecondary} size={18} /></TouchableOpacity>
+          <View style={styles.dateTextContainer}><Text style={styles.dateMain}>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</Text><Text style={styles.dateSub}>
+    {filterByMonth(transactions, currentDate).length} TRANSACTIONS
+  </Text></View>
+          <TouchableOpacity style={styles.navBtn}  onPress={goToNextMonth}><ChevronRight color={COLORS.textSecondary} size={18} /></TouchableOpacity>
+        </View>
+  
+        {/* Tabs */}
+        <View style={styles.tabBar}>
+          {['OVERVIEW', 'EXPENSES', 'SPLITS'].map((tab) => (
+            <TouchableOpacity key={tab} onPress={() => setActiveTab(tab)} style={[styles.tabItem, activeTab === tab && styles.tabItemActive]}>
+               <View style={styles.tabContent}>{activeTab === tab && <Check size={12} color="black" strokeWidth={4} style={{marginRight: 6}} />}<Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab}</Text></View>
+            </TouchableOpacity>
+          ))}
+        </View>
+  
+       {activeTab === 'OVERVIEW' ? renderOverview() : 
+     activeTab === 'EXPENSES' ? renderExpenses() : 
+     renderSplits()}
       </View>
-
-      {/* Tabs */}
-      <View style={styles.tabBar}>
-        {['OVERVIEW', 'EXPENSES', 'SPLITS'].map((tab) => (
-          <TouchableOpacity key={tab} onPress={() => setActiveTab(tab)} style={[styles.tabItem, activeTab === tab && styles.tabItemActive]}>
-             <View style={styles.tabContent}>{activeTab === tab && <Check size={12} color="black" strokeWidth={4} style={{marginRight: 6}} />}<Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{tab}</Text></View>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-     {activeTab === 'OVERVIEW' ? renderOverview() : 
-   activeTab === 'EXPENSES' ? renderExpenses() : 
-   renderSplits()}
-    </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000000" },
   header: { padding: 24, paddingBottom: 10 },
-  headerTitle: { color: 'white', fontSize: 30, fontWeight: '900' },
+  headerTitle: { color: 'white', fontSize: 30, fontFamily:"Outfit-Black" },
   dateSelector: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.cardBg, marginHorizontal: 24, marginBottom: 16, padding: 12, borderRadius: 18, borderWidth: 1, borderColor: COLORS.cardBorder },
   navBtn: { backgroundColor: COLORS.navBtn, padding: 8, borderRadius: 12 },
   dateTextContainer: { alignItems: 'center' },
@@ -568,6 +845,23 @@ const styles = StyleSheet.create({
     gap: 16, 
     marginBottom: 16, 
     marginTop: 8     
+  },
+  emptyContainer: {
+    backgroundColor: COLORS.cardBg,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    borderStyle: 'dashed', // Optional: gives it a "placeholder" look
+  },
+  emptyText: {
+    color: COLORS.textSecondary,
+    fontFamily: 'Outfit-Medium', // or your font
+    fontSize: 14,
+    letterSpacing: 0.5,
   },
   subCardRow: { 
     flexDirection: 'row', 
@@ -601,10 +895,26 @@ const styles = StyleSheet.create({
   legend: { flexDirection: 'row', alignItems: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4 },
   legendText: { color: COLORS.textSecondary, fontSize: 9, fontWeight: '800', marginLeft: 4 },
-  chartContainer: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end', height: 120 },
+  chartContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 120, // Give the chart area a fixed height
+    marginTop: 20,
+    paddingHorizontal: 10,
+  },
   chartColumn: { alignItems: 'center' },
-  barStack: { flexDirection: 'row', gap: 4, alignItems: 'flex-end' },
-  bar: { width: 14, borderTopLeftRadius: 6, borderTopRightRadius: 6 },
+ barStack: {
+    flexDirection: 'row', // Align IN and OUT bars side-by-side
+    alignItems: 'flex-end',
+    height: 100, // Matches your CHART_HEIGHT in dynamicWeeklyTrend
+    gap: 4,
+  },
+  bar: {
+    width: 8,
+    borderRadius: 4,
+    // Height is handled by Animation
+  },
   weekText: { color: COLORS.textSecondary, fontSize: 10, fontWeight: '800', marginTop: 12 },
 donutCard: { 
     padding: 20,

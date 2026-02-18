@@ -116,7 +116,7 @@ if (!parsedAmount || isNaN(parsedAmount)) {
       type: 'Income',
       date: date.toISOString(),
       description: description || '',
-      incomeCategoryName: category,
+      category: category,
     };
 
     console.log('📤 Sending income payload:', payload);

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   StatusBar,
@@ -19,6 +18,7 @@ import { Mail, ArrowRight, Wallet } from 'lucide-react-native';
 import Svg, { Path } from 'react-native-svg';
 import axios from 'axios';
 import { useEffect } from 'react';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
   background: '#000000',
@@ -66,7 +66,7 @@ useEffect(() => {
 
     setIsLoading(true);
     try {
-      const response = await axios.post('https://79d1-2401-4900-cac1-c79b-b9bf-2b18-33f1-8c41.ngrok-free.app/api/user/send-otp', {
+      const response = await axios.post('https://nepenthean-undeclared-gunnar.ngrok-free.dev/api/user/send-otp', {
         email: email,
       });
       navigation.navigate('Otp', { email: email });
@@ -81,14 +81,12 @@ useEffect(() => {
   const isButtonDisabled = !validateEmail(email);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <KeyboardAvoidingView
-          /* FIX: behavior "height" is crucial for Android emulators to push centered content up */
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
-          /* FIX: keyboardVerticalOffset helps prevent the keyboard from touching the input exactly */
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
           <ScrollView

@@ -25,6 +25,25 @@ const COLORS = {
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('en-IN').format(value);
 };
+const formatDateTime = (dateString: string) => {
+  const date = new Date(dateString);
+
+  const month = date
+    .toLocaleString('en-US', { month: 'short' })
+    .toUpperCase();
+
+  const day = date.getDate();
+
+  const time = date
+    .toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    })
+    .toUpperCase();
+
+  return `${month} ${day} • ${time}`;
+};
 
 // ===== MAIN COMPONENT =====
 export default function HomeScreen({ navigation }: any) {
@@ -33,7 +52,10 @@ export default function HomeScreen({ navigation }: any) {
 const [transactions, setTransactions] = useState<any[]>([]);
 const [loading, setLoading] = useState(true);
 const [refreshing, setRefreshing] = useState(false);
-
+const [allTransactions, setAllTransactions] = useState<any[]>([]);
+const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
+const [userName, setUserName] = useState('User');
+const [profileImage, setProfileImage] = useState<string | null>(null);
   // Create separate animated values for each section
   const headerOpacity = useState(new Animated.Value(0))[0];
   const balanceCardOpacity = useState(new Animated.Value(0))[0];
@@ -56,6 +78,7 @@ const onRefresh = React.useCallback(async () => {
 useFocusEffect(
   React.useCallback(() => {
     setLoading(true);
+      loadProfile(); 
     fetchHomeData();
 
     return () => {};
@@ -133,22 +156,81 @@ useFocusEffect(
   return unsubscribe;
 }, []);
 
+const loadProfile = async () => {
+  const storedName = await AsyncStorage.getItem('userName');
+  const storedImage = await AsyncStorage.getItem('profileImage');
+
+  if (storedName) setUserName(storedName);
+  else setUserName('User');
+
+  if (storedImage) setProfileImage(storedImage);
+};
 
 const fetchHomeData = async () => {
   try {
     const userId = await AsyncStorage.getItem('userId');
-    const res = await API.get(`/user/transaction/${userId}`);
-    const apiData = res.data?.data || [];
 
-    // Frontend-only "latest added first"
-  const latestFirst = [...apiData].sort((a, b) => {
-  if (a.createdAt && b.createdAt) {
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  }
-  return apiData.indexOf(b) - apiData.indexOf(a);
-});
+    // 1️⃣ Fetch all transactions (Income + Expense + Split)
+    const resTx = await API.get(`/user/transaction/${userId}`);
+    const apiTxData = resTx.data?.data || [];
 
-setTransactions(latestFirst.slice(0, 5));
+    // 2️⃣ Process normal transactions & SPLIT-type expenses
+    const apiTxWithYou = apiTxData.map((tx: any) => {
+      const isSplitCategory = tx.category?.toLowerCase() === 'split';
+      const isSplitType = tx.type?.toLowerCase() === 'split';
+
+      if (isSplitCategory || isSplitType) {
+        // Clean the title: remove any existing "You • " or "Name • " to prevent duplicates
+        const cleanTitle = tx.title.includes('•') 
+          ? tx.title.split('•')[1].trim() 
+          : tx.title;
+
+        return {
+          ...tx,
+          title: `You • ${cleanTitle}`, 
+          type: 'Expense', // User-initiated split is always an expense in this view
+          category: 'Split',
+          isPaidMember: true,
+        };
+      }
+      return tx;
+    });
+
+    // 3️⃣ Fetch Group Settlement Members (Split Settled Only)
+    const resPaid = await API.get(`/user/split/paid-members`);
+    const groups = resPaid.data?.data || [];
+
+    let paidAsTx: any[] = [];
+
+    groups.forEach((group: any) => {
+      group.members.forEach((member: any) => {
+        if (member.isPaid) {
+          const isYou = member.name === 'You' || member.name.toLowerCase() === 'you';
+          
+          paidAsTx.push({
+            id: `split-${group._id}-${member.id}`,
+            // If it's the user, force "You • ", otherwise use "Member Name • "
+            title: isYou ? `You • ${group.name}` : `${member.name} • ${group.name}`, 
+            description: group.description || 'Split Settlement',
+            amount: member.amount,
+            date: group.updatedAt || group.createdAt,
+            type: isYou ? 'Expense' : 'Income', // If "You" paid, it's an expense. If "John" paid you, it's income.
+            category: 'Split',
+            isPaidMember: true,
+          });
+        }
+      });
+    });
+
+    // 4️⃣ Combine and Sort
+    const combined = [...apiTxWithYou, ...paidAsTx].sort((a, b) => {
+      const getTime = (tx: any) =>
+        new Date(tx.date || tx.createdAt || 0).getTime();
+      return getTime(b) - getTime(a);
+    });
+
+    setAllTransactions(combined);
+    setRecentTransactions(combined.slice(0, 5));
 
   } catch (err) {
     console.log('Fetch error:', err);
@@ -162,23 +244,24 @@ const totals = React.useMemo(() => {
   let income = 0;
   let expense = 0;
 
-  // Added a check to ensure transactions is an array
-  (transactions || []).forEach((tx) => {
-    const amt = parseFloat(tx.amount) || 0; // Fallback to 0 if amount is null/undefined
-    if (tx.type === 'Income') {
-      income += amt;
-    } else {
-      expense += amt;
-    }
+  (allTransactions || []).forEach(tx => {
+    const amt = Number(tx.amount) || 0;
+    if (tx.type === 'Income') income += amt;
+    else expense += amt;
   });
 
   return {
     income,
     expense,
-    balance: income - expense
+    balance: income - expense,
   };
-}, [transactions]);
+}, [allTransactions]);
 
+useEffect(() => {
+  console.log('Total Income:', totals.income);
+  console.log('Total Expense:', totals.expense);
+  console.log('Balance:', totals.balance);
+}, [totals]);
 
   const renderTransactionIcon = (type: 'income' | 'expense') => {
     if (type === 'income') {
@@ -221,19 +304,30 @@ const totals = React.useMemo(() => {
         }
       >
         {/* Header */}
-        <Animated.View style={[
-          styles.header,
-          { opacity: headerOpacity }
-        ]}>
-          <View>
-            <Text style={styles.welcome}>Welcome back,</Text>
-            <Text style={styles.name}>Alex Morgan</Text>
-          </View>
-          <Image
-            source={{ uri: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=100' }}
-            style={styles.profilePic}
-          />
-        </Animated.View>
+       {/* Header */}
+<Animated.View style={[
+  styles.header,
+  { opacity: headerOpacity }
+]}>
+  <View>
+    <Text style={styles.welcome}>Welcome back,</Text>
+    {/* Dynamic Name */}
+    <Text style={styles.name}>{userName}</Text>
+  </View>
+  
+  {profileImage ? (
+    <Image
+      source={{ uri: profileImage }}
+      style={styles.profilePic}
+    />
+  ) : (
+    <View style={[styles.profilePic, { backgroundColor: COLORS.card, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: COLORS.border }]}>
+      <Text style={{ color: COLORS.white, fontFamily: 'Outfit-Black', fontSize: 20 }}>
+        {userName.charAt(0).toUpperCase()}
+      </Text>
+    </View>
+  )}
+</Animated.View>
 
         {/* Balance Card */}
         <Animated.View style={[
@@ -371,42 +465,39 @@ const totals = React.useMemo(() => {
         </Animated.View>
 
         {/* Transaction Cards */}
-{transactions.map((tx) => {
+{recentTransactions.map((tx) => {
   const type = tx.type.toLowerCase() as 'income' | 'expense';
-
+  const txId = tx.id || tx._id;                  // ✅ single ID source
+  const isSelected = selectedTxId === txId;   
+  
   return (
-    <Animated.View
-      key={tx._id}
-      style={{
-        opacity: recentHeaderOpacity,
-        transform: [{ translateY: recentHeaderY }],
-      }}
-    >
+    <Animated.View key={tx._id} style={{ opacity: recentHeaderOpacity, transform: [{ translateY: recentHeaderY }] }}>
       <TouchableOpacity
-        style={[
-          styles.txCard,
-          selectedTxId === tx._id && styles.txCardSelected,
-        ]}
-        onPress={() => setSelectedTxId(tx._id)}
+        style={[styles.txCard, selectedTxId === txId && styles.txCardSelected]}
+        onPress={() => setSelectedTxId(selectedTxId === txId ? null : txId)}
       >
         <View style={styles.txLeft}>
-          <View
-            style={[
-              styles.txIconBg,
-              { backgroundColor: getIconBackgroundColor(type) },
-            ]}
-          >
+          <View style={[styles.txIconBg, { backgroundColor: getIconBackgroundColor(type) }]}>
             {renderTransactionIcon(type)}
           </View>
-          <View>
-            <Text style={styles.txTitle}>
-              {type === 'income'
-                ? tx.incomeCategoryName
-                : tx.expenseCategoryName}
+
+          {/* ✅ CONTAINER WITH WIDTH CONSTRAINT */}
+           <View style={styles.txInfo}>
+            <Text
+              style={[styles.txTitle, isSelected && styles.txTitleSelected]}
+              numberOfLines={isSelected ? undefined : 1}   
+              ellipsizeMode="tail"
+            >
+              {tx.title}
             </Text>
-            <Text style={styles.txTime}>
-              {new Date(tx.date).toLocaleDateString()}
-            </Text>
+        <Text
+  style={styles.txTime}
+  numberOfLines={1}
+  ellipsizeMode="tail"
+>
+  {formatDateTime(tx.date)}
+</Text>
+
           </View>
         </View>
 
@@ -415,10 +506,10 @@ const totals = React.useMemo(() => {
             {getAmountPrefix(type)}₹{formatCurrency(tx.amount)}
           </Text>
           <View style={styles.txCategoryRow}>
-            <View
-              style={[styles.dot, { backgroundColor: getDotColor(type) }]}
-            />
-            <Text style={styles.txCategory}>{type.toUpperCase()}</Text>
+            <View style={[styles.dot, { backgroundColor: getDotColor(type) }]} />
+            <Text style={styles.txCategory}>
+              {tx.isPaidMember ? 'SPLIT' : type.toUpperCase()}
+            </Text>
           </View>
         </View>
       </TouchableOpacity>
@@ -433,6 +524,10 @@ const totals = React.useMemo(() => {
 
 // ===== STYLES =====
 const styles = StyleSheet.create({
+  txInfo: {
+  flexShrink: 1,
+  maxWidth: '64%',        
+},
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -711,11 +806,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '300',
     fontFamily: 'Outfit-SemiBold',
-    letterSpacing: 1
+    letterSpacing: 1,
+      flexShrink: 0, 
   },
 
   txRight: {
     alignItems: 'flex-end',
+      flexShrink: 0,
   },
 
   txAmount: {
