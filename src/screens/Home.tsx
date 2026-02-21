@@ -149,7 +149,7 @@ useFocusEffect(
     }, 350);
   };
 
-  animateSequence(); // initial run
+  animateSequence(); 
 
   const unsubscribe = navigation.addListener('focus', animateSequence);
 
@@ -157,13 +157,20 @@ useFocusEffect(
 }, []);
 
 const loadProfile = async () => {
-  const storedName = await AsyncStorage.getItem('userName');
-  const storedImage = await AsyncStorage.getItem('profileImage');
+  const userId = await AsyncStorage.getItem('userId');
 
-  if (storedName) setUserName(storedName);
-  else setUserName('User');
+  if (!userId) {
+    setUserName('User');
+    setProfileImage(null);
+    return;
+  }
 
-  if (storedImage) setProfileImage(storedImage);
+  const storedName = await AsyncStorage.getItem(`userName_${userId}`);
+  const storedImage = await AsyncStorage.getItem(`profileImage_${userId}`);
+
+  setUserName(storedName || 'User');
+  setProfileImage(storedImage || null);
+
 };
 
 const fetchHomeData = async () => {

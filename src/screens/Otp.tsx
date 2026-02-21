@@ -53,7 +53,7 @@ const { setUserToken } = useContext(AuthContext);
     setResending(true);
 
     await axios.post(
-      'https://nepenthean-undeclared-gunnar.ngrok-free.dev/api/user/send-otp',
+      'https://api.xpenly.com/api/user/send-otp',
       { email }
     );
 
@@ -71,7 +71,7 @@ const handleVerifyOTP = async () => {
   const otpString = otp.join('');
 
   try {
-    const response = await axios.post('https://nepenthean-undeclared-gunnar.ngrok-free.dev/api/user/verify-otp', {
+    const response = await axios.post('https://api.xpenly.com/api/user/verify-otp', {
       email: email,
       otp: otpString,
     });

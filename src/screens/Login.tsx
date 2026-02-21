@@ -66,7 +66,7 @@ useEffect(() => {
 
     setIsLoading(true);
     try {
-      const response = await axios.post('https://nepenthean-undeclared-gunnar.ngrok-free.dev/api/user/send-otp', {
+      const response = await axios.post('https://api.xpenly.com/api/user/send-otp', {
         email: email,
       });
       navigation.navigate('Otp', { email: email });

@@ -40,7 +40,7 @@ import DatePicker from 'react-native-date-picker';
 import { TextInput } from 'react-native';
 import { KeyboardAvoidingView, Platform } from 'react-native';
 
-const BASE_URL = 'https://nepenthean-undeclared-gunnar.ngrok-free.dev';
+const BASE_URL = 'https://api.xpenly.com';
 const SettingItem = ({ icon: Icon, color, title, sub, isLast, size = 18, onPress }: any) => (
   <TouchableOpacity
     style={[styles.settingRow, isLast && { borderBottomWidth: 0 }]}
@@ -73,9 +73,10 @@ const [selectedPhoto, setSelectedPhoto] = useState<any>(null);
   useEffect(() => {
     const loadUserInfo = async () => {
       try {
-        const storedName = await AsyncStorage.getItem('userName');
+         const userId = await AsyncStorage.getItem('userId');
         const storedEmail = await AsyncStorage.getItem('userEmail');
-        const storedImage = await AsyncStorage.getItem('profileImage');
+           const storedName = await AsyncStorage.getItem(`userName_${userId}`);
+      const storedImage = await AsyncStorage.getItem(`profileImage_${userId}`);
 
         if (storedName) setEditName(storedName);
         if (storedEmail) setEmail(storedEmail);
@@ -137,15 +138,13 @@ const handleSaveProfile = async () => {
     const formData = new FormData();
     formData.append('name', editName);
 
-    if (selectedPhoto) {
-      formData.append('profilePic', {
-        uri: Platform.OS === 'android'
-          ? selectedPhoto.uri
-          : selectedPhoto.uri.replace('file://', ''),
-        type: selectedPhoto.type || 'image/jpeg',
-        name: selectedPhoto.fileName || 'profile_picture.jpg',
-      });
-    }
+   if (selectedPhoto) {
+  formData.append('profilePic', {
+    uri: selectedPhoto.uri,
+    type: selectedPhoto.type || 'image/jpeg',
+    name: selectedPhoto.fileName || `profile_${Date.now()}.jpg`,
+  });
+}
 
    const token = await AsyncStorage.getItem('userToken');
 
@@ -154,24 +153,25 @@ const response = await API.patch(
   formData,
   {
     headers: {
-      'Content-Type': 'multipart/form-data',
       Authorization: `Bearer ${token}`,
+      'Content-Type': 'multipart/form-data',
     },
-    transformRequest: data => data,
   }
 );
 
-    // ✅ SAVE NAME LOCALLY (MOST IMPORTANT)
-    await AsyncStorage.setItem('userName', editName);
+
+const userId = await AsyncStorage.getItem('userId');
 
     // ✅ UPDATE IMAGE IF CHANGED
     const updatedImageUrl = response.data.user?.profilePic;
 
-    if (updatedImageUrl) {
-      const fullImagePath = `${BASE_URL}/${updatedImageUrl}`;
-      await AsyncStorage.setItem('profileImage', fullImagePath);
-      setProfileImage(fullImagePath);
-    }
+    await AsyncStorage.setItem(`userName_${userId}`, editName);
+
+if (updatedImageUrl) {
+  const fullImagePath = `${BASE_URL}/${updatedImageUrl}`;
+  await AsyncStorage.setItem(`profileImage_${userId}`, fullImagePath);
+  setProfileImage(fullImagePath);
+}
 
     setSelectedPhoto(null);
     closeModal();
@@ -188,11 +188,14 @@ const response = await API.patch(
 const pickImage = async () => {
   const result = await launchImageLibrary({
     mediaType: 'photo',
-    quality: 0.7,
+    quality: 0.5,
   });
 
   if (result.assets?.[0]) {
+    
     const asset = result.assets[0];
+      console.log("SIZE:", asset.fileSize);
+      console.log("PHOTO URI:", selectedPhoto?.uri);
     setProfileImage(asset.uri || null);
     setSelectedPhoto(asset); 
   }
@@ -227,57 +230,73 @@ const pickImage = async () => {
       return date.toISOString().split('T')[0];
     };
 
-    const handleDownloadCSV = async () => {
-      const startStr = formatDate(fromDate) || '2024-01-01';
-      const endStr = formatDate(toDate) || new Date().toISOString().split('T')[0];
-      try {
-        setDownloading(true);
-        const userId = await AsyncStorage.getItem('userId');
-        const token = await AsyncStorage.getItem('userToken');
-        let apiEndDate = endStr;
-        if (toDate) {
-          const endOfDay = new Date(toDate);
-          endOfDay.setHours(23, 59, 59, 999);
-          apiEndDate = endOfDay.toISOString();
-        }
-        const fileName = `transactions_from_${startStr}_to_${endStr}.csv`;
-        const url = `${API.defaults.baseURL}/user/download-csv/${userId}?startDate=${startStr}&endDate=${apiEndDate}`;
-        await ReactNativeBlobUtil.config({
-          fileCache: true,
-          addAndroidDownloads: {
-            useDownloadManager: true,
-            notification: true,
-            path: `${ReactNativeBlobUtil.fs.dirs.DownloadDir}/${fileName}`,
-            description: 'Downloading transaction report.',
-            mime: 'text/csv',
-          },
-        }).fetch('GET', url, { Authorization: `Bearer ${token}` });
-        onClose();
-      } catch (err) {
-        console.error('❌ Download Error:', err);
-      } finally {
-        setDownloading(false);
-      }
-    };
+  const handleDownloadCSV = async () => {
+  if (!fromDate || !toDate) {
+    alert("Please select both From and To dates");
+    return;
+  }
+
+  try {
+    setDownloading(true);
+
+    const userId = await AsyncStorage.getItem('userId');
+    const token = await AsyncStorage.getItem('userToken');
+
+    // ✅ START OF DAY
+    const startOfDay = new Date(fromDate);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    // ✅ END OF DAY
+    const endOfDay = new Date(toDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const startISO = startOfDay.toISOString();
+    const endISO = endOfDay.toISOString();
+
+    const fileName = `Transactions_${formatDate(fromDate)}_to_${formatDate(toDate)}.csv`;
+
+    const url = `${API.defaults.baseURL}/user/download-csv/${userId}?startDate=${startISO}&endDate=${endISO}`;
+
+    await ReactNativeBlobUtil.config({
+      fileCache: true,
+      addAndroidDownloads: {
+        useDownloadManager: true,
+        notification: true,
+        path: `${ReactNativeBlobUtil.fs.dirs.DownloadDir}/${fileName}`,
+        description: 'Downloading transaction report.',
+        mime: 'text/csv',
+      },
+    }).fetch('GET', url, {
+      Authorization: `Bearer ${token}`,
+    });
+
+    onClose();
+
+  } catch (err) {
+    console.error('❌ Download Error:', err);
+  } finally {
+    setDownloading(false);
+  }
+};
 
     return (
       <>
         <View style={styles.exportIconWrap}><Download size={28} color="#60a5fa" strokeWidth={2}/></View>
         <Text style={styles.modalTitle1}>Export Transactions</Text>
         <Text style={styles.modalSub}>Select date range or download all transactions</Text>
-        <Text style={styles.inputLabel}>FROM DATE</Text>
-     <View style={styles.dateInput}>
+       <Text style={styles.inputLabel}>FROM DATE</Text>
+<View style={styles.dateInput}>
   <Text style={styles.datePlaceholder}>
-    {formatDate(toDate) || 'select date'}
+    {formatDate(fromDate) || 'select date'}
   </Text>
 
-  <TouchableOpacity onPress={() => setOpenTo(true)}>
+  <TouchableOpacity onPress={() => setOpenFrom(true)}>
     <Calendar size={16} color="#9ca3af" />
   </TouchableOpacity>
 </View>
 
-        <Text style={[styles.inputLabel, { marginTop: 14 }]}>TO DATE</Text>
-      <View style={styles.dateInput}>
+       <Text style={[styles.inputLabel, { marginTop: 14 }]}>TO DATE</Text>
+<View style={styles.dateInput}>
   <Text style={styles.datePlaceholder}>
     {formatDate(toDate) || 'select date'}
   </Text>

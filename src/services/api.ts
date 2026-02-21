@@ -3,7 +3,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const API = axios.create({
-  baseURL: 'https://nepenthean-undeclared-gunnar.ngrok-free.dev/api',
+  baseURL: 'https://api.xpenly.com/api',
 });
 
 API.interceptors.request.use(async config => {
